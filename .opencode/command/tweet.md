@@ -23,4 +23,10 @@ Do NOT:
 - Use words like "excited", "amazing", "journey", "dive in"
 - Use emojis
 
-Output ONLY the tweet text, nothing else.
+Before outputting the final tweet, reason through:
+1. What are the key technical highlights worth mentioning?
+2. What tone/angle works best for this particular day's challenge?
+3. Draft 2-3 tweet variations with different angles or phrasings
+4. Evaluate each variation for character count, clarity, and engagement
+
+Finally, output the best tweet clearly labeled as "Suggested tweet:" followed by just the tweet text.
