@@ -1,24 +1,25 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
 # IN_FILE = Path("./demo_input.txt")
 IN_FILE = Path("./full_input.txt")
 LOCK_RING = 100
 
+
 def part1():
     password = 0
     lock_state = 50
-    
-    pattern = re.compile(r'([LR])(\d+)')
-    for line in IN_FILE.open('r'):
+
+    pattern = re.compile(r"([LR])(\d+)")
+    for line in IN_FILE.open("r"):
         # Strip any trailing newlines
         line = line.rstrip("\n")
-        
+
         m = pattern.fullmatch(line)
         assert m
 
         # Left rotation subtracts
-        if m.group(1) == 'L':
+        if m.group(1) == "L":
             lock_state -= int(m.group(2))
         else:
             lock_state += int(m.group(2))
@@ -32,22 +33,23 @@ def part1():
 
     print(f"Part1 Password is: {password}")
 
+
 def part2():
     password = 0
     lock_state = 50
-    
-    pattern = re.compile(r'([LR])(\d+)')
-    for line in IN_FILE.open('r'):
+
+    pattern = re.compile(r"([LR])(\d+)")
+    for line in IN_FILE.open("r"):
         # Strip any trailing newlines
         line = line.rstrip("\n")
-        
+
         m = pattern.fullmatch(line)
         assert m
         direction = m.group(1)
         spin_amount = int(m.group(2))
 
         # Left rotation subtracts
-        sign = -1 if direction == 'L' else 1
+        sign = -1 if direction == "L" else 1
 
         for _ in range(spin_amount):
             lock_state += sign
@@ -58,10 +60,10 @@ def part2():
 
             if lock_state == 0:
                 password += 1
-            
+
     print(f"Part2 Password is: {password}")
 
-    
+
 if __name__ == "__main__":
     part1()
     part2()

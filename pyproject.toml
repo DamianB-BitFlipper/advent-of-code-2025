@@ -9,3 +9,39 @@ dependencies = [
  "kaleido>=0.2",
  "sortedcontainers>=2.4.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.0",
+    "pyright>=1.1.407",
+    "ruff>=0.14.8",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+reportMissingImports = true
+reportMissingTypeStubs = false

@@ -1,9 +1,10 @@
-from pathlib import Path
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 # IN_FILE = Path("./demo_input.txt")
 IN_FILE = Path("./full_input.txt")
+
 
 def compute_max_joltage(battery_bank: Iterable[int], n_active: int) -> int:
     b_indices = defaultdict(list)
@@ -43,7 +44,6 @@ def compute_max_joltage(battery_bank: Iterable[int], n_active: int) -> int:
             if look_for > 0:
                 look_for -= 1
             else:
-
                 # We should always have something to pop
                 assert selected_values
                 assert selected_indices
@@ -55,29 +55,31 @@ def compute_max_joltage(battery_bank: Iterable[int], n_active: int) -> int:
     # Build the return value from the `selected_values`
     ret_joltage = 0
     for base, val in enumerate(reversed(selected_values)):
-        ret_joltage += val * 10 ** base
+        ret_joltage += val * 10**base
 
     return ret_joltage
-        
+
 
 def part1():
     sum_joltage = 0
-    for battery_bank in IN_FILE.open('r'):
+    for battery_bank in IN_FILE.open("r"):
         # Strip any trailing newlines
-        battery_bank = battery_bank.rstrip('\n')
+        battery_bank = battery_bank.rstrip("\n")
         sum_joltage += compute_max_joltage(map(int, battery_bank), 2)
 
     print(f"Part 1 sum max joltage: {sum_joltage}")
 
+
 def part2():
     sum_joltage = 0
-    for battery_bank in IN_FILE.open('r'):
+    for battery_bank in IN_FILE.open("r"):
         # Strip any trailing newlines
-        battery_bank = battery_bank.rstrip('\n')
+        battery_bank = battery_bank.rstrip("\n")
         sum_joltage += compute_max_joltage(map(int, battery_bank), 12)
 
     print(f"Part 2 sum max joltage: {sum_joltage}")
-    
+
+
 if __name__ == "__main__":
     part1()
     part2()

@@ -1,9 +1,10 @@
-from pathlib import Path
-import re
 import math
+import re
+from pathlib import Path
 
 # IN_FILE = Path("./demo_input.txt")
 IN_FILE = Path("./full_input.txt")
+
 
 def is_invalid_id_part1(num: int) -> bool:
     n_digits = math.ceil(math.log10(num))
@@ -17,8 +18,9 @@ def is_invalid_id_part1(num: int) -> bool:
 
     return lower_half == upper_half
 
+
 def part1():
-    pattern = re.compile(r'(\d+)-(\d+)')
+    pattern = re.compile(r"(\d+)-(\d+)")
     invalid_sum = 0
     for match in pattern.finditer(IN_FILE.read_text()):
         range_start = int(match.group(1))
@@ -29,6 +31,7 @@ def part1():
                 invalid_sum += i
 
     print(f"Part1 Invalid sum is: {invalid_sum}")
+
 
 def is_invalid_id_part2(num: int) -> bool:
     num_str = str(num)
@@ -47,9 +50,10 @@ def is_invalid_id_part2(num: int) -> bool:
 
     # No invalid match found
     return False
-    
+
+
 def part2():
-    pattern = re.compile(r'(\d+)-(\d+)')
+    pattern = re.compile(r"(\d+)-(\d+)")
     invalid_sum = 0
     for match in pattern.finditer(IN_FILE.read_text()):
         range_start = int(match.group(1))
@@ -60,8 +64,8 @@ def part2():
                 invalid_sum += i
 
     print(f"Part2 Invalid sum is: {invalid_sum}")
-    
+
+
 if __name__ == "__main__":
     part1()
     part2()
-
