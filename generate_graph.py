@@ -66,6 +66,14 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
     days = [d[0] for d in data]
     times = [d[1]["time"] for d in data]
     locs = [d[1]["loc"] for d in data]
+    total_time = sum(times)
+
+    # Format total time as hours + minutes if >= 60 minutes
+    if total_time >= 60:
+        hours, mins = divmod(total_time, 60)
+        total_time_str = f"{hours}h {mins}m" if mins else f"{hours}h"
+    else:
+        total_time_str = f"{total_time}m"
 
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -131,7 +139,7 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
     # Update layout for mobile/Twitter optimized dark theme
     fig.update_layout(
         title=dict(
-            text="<b>Advent of Code 2025</b><br><sup>Progress Tracker</sup>",
+            text=f"<b>Advent of Code 2025</b><br><sup>Total Time Spent: {total_time_str}</sup>",
             font=dict(size=40, color="#f8fafc", family="system-ui, sans-serif"),
             x=0.5,
             xanchor="center",
