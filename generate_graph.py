@@ -67,6 +67,7 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
     times = [d[1]["time"] for d in data]
     locs = [d[1]["loc"] for d in data]
     total_time = sum(times)
+    avg_time = round(total_time / len(times))
 
     # Format total time as hours + minutes if >= 60 minutes
     if total_time >= 60:
@@ -74,6 +75,9 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
         total_time_str = f"{hours}h {mins}m" if mins else f"{hours}h"
     else:
         total_time_str = f"{total_time}m"
+
+    # Format average time in minutes
+    avg_time_str = f"{avg_time}m"
 
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -139,13 +143,35 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
     # Update layout for mobile/Twitter optimized dark theme
     fig.update_layout(
         title={
-            "text": f"<b>Advent of Code 2025</b><br><sup>Total Time Spent: {total_time_str}</sup>",
+            "text": "<b>Advent of Code 2025</b>",
             "font": {"size": 40, "color": "#f8fafc", "family": "system-ui, sans-serif"},
             "x": 0.5,
             "xanchor": "center",
             "yanchor": "top",
-            "y": 0.925,
+            "y": 0.98,
         },
+        annotations=[
+            {
+                "text": f"Total Time Spent: {total_time_str}",
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.5,
+                "y": 1.15,
+                "showarrow": False,
+                "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
+                "xanchor": "center",
+            },
+            {
+                "text": f"Average Time Per Problem: {avg_time_str}",
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.5,
+                "y": 1.09,
+                "showarrow": False,
+                "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
+                "xanchor": "center",
+            },
+        ],
         font={"family": "system-ui, sans-serif", "color": "#e2e8f0", "size": 18},
         paper_bgcolor="#0b1120",
         plot_bgcolor="#111b2d",
