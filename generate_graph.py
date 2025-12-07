@@ -88,22 +88,21 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
             x=days,
             y=locs,
             name="Lines of Code",
-            mode="lines+markers+text",
-            text=[f"{loc} LOC" for loc in locs],
-            textposition="bottom center",
-            textfont={"size": 14, "color": "#fbbf24", "family": "JetBrains Mono, monospace"},
+            mode="lines+markers",  # Removed "+text" to reduce clutter
             line={
-                "color": "#f59e0b",
-                "width": 4,
+                "color": "#fbbf24",  # Brighter Amber
+                "width": 3,
                 "shape": "spline",
-                "smoothing": 0.3,
+                "smoothing": 1.0,  # Adjusted smoothing
             },
             marker={
-                "size": 20,
-                "color": "#f59e0b",
-                "line": {"color": "#78350f", "width": 3},
+                "size": 16,
+                "color": "#111b2d",  # Match plot_bgcolor for cutout effect
+                "line": {"color": "#fbbf24", "width": 3},
                 "symbol": "diamond",
             },
+            fill="tozeroy",  # Add area fill
+            fillcolor="rgba(251, 191, 36, 0.1)",  # Subtle amber tint
             hovertemplate="<b>Day %{x}</b><br>LOC: %{y}<extra></extra>",
             legendrank=2,
             cliponaxis=False,
@@ -117,22 +116,21 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
             x=days,
             y=times,
             name="Time (min)",
-            mode="lines+markers+text",
-            text=[f"{t} min" for t in times],
-            textposition="top center",
-            textfont={"size": 14, "color": "#34d399", "family": "JetBrains Mono, monospace"},
+            mode="lines+markers",  # Removed "+text"
             line={
-                "color": "#10b981",
-                "width": 4,
+                "color": "#34d399",  # Brighter Emerald
+                "width": 3,
                 "shape": "spline",
-                "smoothing": 0.3,
+                "smoothing": 1.0,
             },
             marker={
-                "size": 18,
-                "color": "#10b981",
-                "line": {"color": "#064e3b", "width": 3},
+                "size": 16,
+                "color": "#111b2d",  # Match plot_bgcolor for cutout effect
+                "line": {"color": "#34d399", "width": 3},
                 "symbol": "circle",
             },
+            fill="tozeroy",  # Add area fill
+            fillcolor="rgba(52, 211, 153, 0.1)",  # Subtle emerald tint
             hovertemplate="<b>Day %{x}</b><br>Time: %{y} min<extra></extra>",
             legendrank=1,
             cliponaxis=False,
@@ -156,7 +154,7 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.5,
-                "y": 1.15,
+                "y": 1.17,
                 "showarrow": False,
                 "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
                 "xanchor": "center",
@@ -166,7 +164,7 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.5,
-                "y": 1.09,
+                "y": 1.14,
                 "showarrow": False,
                 "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
                 "xanchor": "center",
@@ -210,21 +208,20 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
 
     fig.update_xaxes(
         title_text="<b>Day</b>",
-        title_font={"size": 22, "color": "#94a3b8"},
-        tickfont={"size": 20, "color": "#cbd5e1"},
+        title_font={"size": 18, "color": "#94a3b8"},
+        tickfont={"size": 16, "color": "#cbd5e1"},
         tickmode="array",
         tickvals=days,
         ticktext=[f"{d}" for d in days],
-        gridcolor="#1f2937",
+        gridcolor="#334155",
         gridwidth=1,
+        griddash="dot",  # Dashed vertical lines
         zeroline=False,
-        showline=True,
-        linewidth=2,
-        linecolor="#475569",
+        showline=False,  # Remove solid axis line
         range=[x_min, x_max],
-        ticklen=10,
-        tickcolor="#475569",
-        ticklabelstandoff=12,
+        ticklen=8,
+        tickcolor="#334155",
+        ticklabelstandoff=8,
     )
 
     # Calculate sensible y-axis ranges with nice round numbers
@@ -250,35 +247,33 @@ def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
     # Primary y-axis (Time)
     fig.update_yaxes(
         title_text="<b>Time (minutes)</b>",
-        title_font={"size": 22, "color": "#10b981"},
-        tickfont={"size": 20, "color": "#10b981"},
-        gridcolor="#1f2937",
+        title_font={"size": 18, "color": "#34d399"},
+        tickfont={"size": 16, "color": "#34d399"},
+        gridcolor="#334155",
         gridwidth=1,
+        griddash="dot",
         zeroline=False,
-        showline=True,
-        linewidth=2,
-        linecolor="#10b981",
+        showline=False,
         secondary_y=False,
         range=[time_min, time_max],
         ticklen=8,
+        tickcolor="#334155",
     )
 
     # Secondary y-axis (LOC)
     fig.update_yaxes(
         title_text="<b>Lines of Code</b>",
-        title_font={"size": 22, "color": "#f59e0b"},
-        tickfont={"size": 20, "color": "#f59e0b"},
-        gridcolor="rgba(51, 65, 85, 0.25)",
-        gridwidth=1,
+        title_font={"size": 18, "color": "#fbbf24"},
+        tickfont={"size": 16, "color": "#fbbf24"},
+        showgrid=False,  # Hide secondary grid to prevent visual clutter
         zeroline=False,
-        showline=True,
-        linewidth=2,
-        linecolor="#f59e0b",
+        showline=False,
         secondary_y=True,
         range=[loc_min, loc_max],
         overlaying="y",
         side="right",
         ticklen=8,
+        tickcolor="#334155",
     )
 
     # Add subtle gradient effect with shapes
