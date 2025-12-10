@@ -1,4 +1,5 @@
 import bisect
+import random
 import re
 from collections import namedtuple
 from collections.abc import Iterator
@@ -6,8 +7,10 @@ from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
+
+random.seed(42)
 
 Point = namedtuple("Point", ["x", "y"])
 type Edge = tuple[Point, Point]
@@ -22,8 +25,9 @@ def compute_area(points: tuple[Point, Point]) -> int:
 
 def trace_edges(points: tuple[Point, Point]) -> Iterator[Point]:
     """Yield all of the points on the edges of the rectangle formed by `points`."""
-    # Smaller x comes first, then smaller y acts as tie breaker
-    p1, p2 = sorted(points)
+    # Convert `points` in to a top left and bottom right point `p1` and `p2` respectively
+    p1 = Point(min(p.x for p in points), min(p.y for p in points))
+    p2 = Point(max(p.x for p in points), max(p.y for p in points))
 
     dx = p2.x - p1.x
     dy = p2.y - p1.y
@@ -41,7 +45,7 @@ def trace_edges(points: tuple[Point, Point]) -> Iterator[Point]:
         + [(dx, dy - diffy) for diffy in range(1, dy)]
         + [(dx - diffx, 0) for diffx in range(1, dx)]
     )
-    # random.shuffle(diffs)
+    random.shuffle(diffs)
 
     for diffx, diffy in diffs:
         yield Point(p1.x + diffx, p1.y + diffy)
@@ -84,14 +88,15 @@ class AmorphousPolygon:
         self.vedges.sort(key=lambda edge: edge[0].x)
 
     def _projection_intersects_uncached(
-        self, point: Point
+        self,
+        point: Point,
     ) -> tuple[Edge | None, Edge | None, Edge | None, Edge | None]:
         x_indexl = bisect.bisect_left(self.vedges, point.x, key=lambda edge: edge[0].x)
         x_indexr = bisect.bisect_right(self.vedges, point.x, key=lambda edge: edge[0].x)
-        y_indexl = bisect.bisect_left(self.hedges, point.y, key=lambda edge: edge[0].y)
-        y_indexr = bisect.bisect_right(self.hedges, point.y, key=lambda edge: edge[0].y)
 
-        # A `point` is contained in this shape if it has a edge in all 4 directions
+        y_indexr = bisect.bisect_right(self.hedges, point.y, key=lambda edge: edge[0].y)
+        y_indexl = bisect.bisect_left(self.hedges, point.y, key=lambda edge: edge[0].y)
+
         north_edge = next(
             (
                 edge
@@ -117,51 +122,60 @@ class AmorphousPolygon:
 
         return north_edge, south_edge, east_edge, west_edge
 
-    def _does_projection_intersect(self, point: Point) -> bool:
-        return all(self._projection_intersects(point))
+    def _point_projected_on_hedge(self, point: Point, hedge: Edge, *, offset: int) -> Point:
+        return Point(point.x, hedge[0].y + offset)
+
+    def _point_projected_on_vedge(self, point: Point, vedge: Edge, *, offset: int) -> Point:
+        return Point(vedge[0].x + offset, point.y)
 
     def __contains__(self, point: Point) -> bool:
-        nearest_edges = self._projection_intersects(point)
-        if not all(nearest_edges):
-            return False
+        # First check if point is on the polygon's border
+        if any(
+            edge
+            for edge in self.hedges
+            if edge[0].x <= point.x <= edge[1].x and edge[0].y == point.y
+        ):
+            return True
+        if any(
+            edge
+            for edge in self.vedges
+            if edge[0].y <= point.y <= edge[1].y and edge[0].x == point.x
+        ):
+            return True
 
-        north_edge, south_edge, east_edge, west_edge = nearest_edges
-        assert north_edge is not None
-        assert south_edge is not None
-        assert east_edge is not None
-        assert west_edge is not None
+        seen = set()
+        to_process = [point]
 
-        north_projection_pass = all(
-            [
-                self._does_projection_intersect(Point(point.x, point.y - dy))
-                for dy in range(1, point.y - north_edge[0].y + 1)
-            ]
-        )
-        south_projection_pass = all(
-            [
-                self._does_projection_intersect(Point(point.x, point.y + dy))
-                for dy in range(1, south_edge[0].y - point.y + 1)
-            ]
-        )
-        east_projection_pass = all(
-            [
-                self._does_projection_intersect(Point(point.x + dx, point.y))
-                for dx in range(1, east_edge[0].x - point.x + 1)
-            ]
-        )
-        west_projection_pass = all(
-            [
-                self._does_projection_intersect(Point(point.x - dx, point.y))
-                for dx in range(1, point.x - west_edge[0].x + 1)
-            ]
-        )
+        while to_process:
+            p = to_process.pop()
+            edges = self._projection_intersects(p)
+            if not all(edges):
+                return False
 
-        return (
-            north_projection_pass
-            and south_projection_pass
-            and east_projection_pass
-            and west_projection_pass
-        )
+            north_edge, south_edge, east_edge, west_edge = edges
+            assert north_edge
+            assert south_edge
+            assert east_edge
+            assert west_edge
+
+            npoint = self._point_projected_on_hedge(p, north_edge, offset=1)
+            spoint = self._point_projected_on_hedge(p, south_edge, offset=-1)
+            epoint = self._point_projected_on_vedge(p, east_edge, offset=-1)
+            wpoint = self._point_projected_on_vedge(p, west_edge, offset=1)
+
+            if npoint not in seen:
+                to_process.append(npoint)
+            if spoint not in seen:
+                to_process.append(spoint)
+            if epoint not in seen:
+                to_process.append(epoint)
+            if wpoint not in seen:
+                to_process.append(wpoint)
+
+            seen |= {npoint, spoint, epoint, wpoint}
+
+        # All of the bouncing terminated without exiting the polygon, we must be inside it
+        return True
 
 
 def part1():
@@ -185,7 +199,7 @@ def part2():
             assert match
             tiles.append(Point(int(match.group(1)), int(match.group(2))))
 
-    for p1, p2 in zip(tiles, tiles[1:] + [tiles[0]]):
+    for p1, p2 in zip(tiles, tiles[1:] + [tiles[0]], strict=True):
         apolygon.add_line(p1, p2)
 
     # Ensure that the `apolygon` was built correctly
@@ -195,11 +209,13 @@ def part2():
     rectangles = sorted(combinations(tiles, 2), key=compute_area, reverse=True)
 
     for i, rect in enumerate(rectangles):
-        print("Processed ", i)
+        print(f"Processed {i} / {len(rectangles)}")
 
         for j, point in enumerate(trace_edges(rect)):
-            if j and not (j % 10):
-                print(f"Border {j}")
+            if j and not (j % 100):
+                print(
+                    f"Border {j} / {2 * abs(rect[0].x - rect[1].x) + 2 * abs(rect[0].y - rect[1].y)}"
+                )
             if point not in apolygon:
                 break
         else:
@@ -207,7 +223,7 @@ def part2():
             return
 
     # There should always be a solution
-    assert False
+    raise AssertionError()
 
 
 if __name__ == "__main__":
