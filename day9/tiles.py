@@ -130,16 +130,17 @@ class AmorphousPolygon:
 
     def __contains__(self, point: Point) -> bool:
         # First check if point is on the polygon's border
+        x_indexl = bisect.bisect_left(self.vedges, point.x, key=lambda edge: edge[0].x)
+        x_indexr = bisect.bisect_right(self.vedges, point.x, key=lambda edge: edge[0].x)
+
+        y_indexr = bisect.bisect_right(self.hedges, point.y, key=lambda edge: edge[0].y)
+        y_indexl = bisect.bisect_left(self.hedges, point.y, key=lambda edge: edge[0].y)
         if any(
-            edge
-            for edge in self.hedges
-            if edge[0].x <= point.x <= edge[1].x and edge[0].y == point.y
+            edge for edge in self.hedges[y_indexl:y_indexr] if edge[0].x <= point.x <= edge[1].x
         ):
             return True
         if any(
-            edge
-            for edge in self.vedges
-            if edge[0].y <= point.y <= edge[1].y and edge[0].x == point.x
+            edge for edge in self.vedges[x_indexl:x_indexr] if edge[0].y <= point.y <= edge[1].y
         ):
             return True
 
