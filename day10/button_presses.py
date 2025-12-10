@@ -3,11 +3,9 @@ from collections import deque
 from pathlib import Path
 
 import line_profiler
-from sortedcontainers import SortedKeyList, SortedList
 
 IN_FILE = Path("./demo_input.txt")
 # IN_FILE = Path("./full_input.txt")
-
 
 class Machine:
     def __init__(self, configuration: str) -> None:
@@ -31,7 +29,14 @@ class Machine:
         # Extract the joltages
         joltages_match = re.search(r"\{(\d[\d,]*)\}", rest_config)
         assert joltages_match
-        self.target_joltages = tuple(int(j) for j in joltages_match.group(1).split(","))
+
+        target_joltages = ""
+        joltage_margins = ""
+        for j in joltages_match.group(1).split(","):
+            target_joltages += format(int(j), '09b') + "0"
+            joltage_margins += "0" * 9 + "1"
+        self.target_joltages = int(target_joltages, 2)
+        self.joltage_margins = int(joltage_margins, 2)
 
     @staticmethod
     def _toggle_indicators(indicators: tuple[int, ...], button: tuple[int, ...]) -> tuple[int, ...]:
@@ -39,11 +44,6 @@ class Machine:
         return tuple(
             indicators[i] ^ 1 if i in button else indicators[i] for i in range(len(indicators))
         )
-
-    @staticmethod
-    def _add_joltages(joltages: tuple[int, ...], button: tuple[int, ...]) -> tuple[int, ...]:
-        """Add to the `joltages` according to the `button`."""
-        return tuple(joltages[i] + 1 if i in button else joltages[i] for i in range(len(joltages)))
 
     def turn_on(self) -> int:
         seen = set()
@@ -72,60 +72,140 @@ class Machine:
         # There should always be a way to turn on the machine
         raise AssertionError()
 
-    @line_profiler.profile
+    def _to_b2_button(self, button: tuple[int, ...]) -> int:
+        ret_b2_button_str = ""
+        for i in range(len(self.target_state)):
+            if i in button:
+                ret_b2_button_str += "0" * 8 + "1" + "0"
+            else:
+                ret_b2_button_str += "0" * 10
+
+        return int(ret_b2_button_str, 2)
+
+    def _to_b2_button_index(self, button_index: int) -> int:
+        ret_b2_button_index_str = ""
+        for i in range(len(self.buttons)):
+            if i == button_index:
+                ret_b2_button_index_str += "0" * 9 + "1"
+            else:
+                ret_b2_button_index_str += "0" * 10
+
+        return int(ret_b2_button_index_str, 2)
+
+    @staticmethod
+    def _count_b2_button_presses(b2_button_presses: int) -> int:
+        ret_count = 0
+        mask = int("1" * 10, 2)
+
+        while b2_button_presses:
+            ret_count += (b2_button_presses & mask)
+            b2_button_presses >>= 10
+
+        return ret_count
+
+    def _b2_joltages_to_regular(self, b2_joltages: int) -> tuple[int, ...]:
+        ret = []
+        mask = int("1" * 9 + "0", 2)        
+        for _ in range(len(self.target_state)):
+            joltage = (b2_joltages & mask) >> 1
+            ret.insert(0, joltage)
+
+            b2_joltages >>= 10
+
+        return tuple(ret)
+
+    def _b2_button_to_regular(self, b2_button: int) -> tuple[int, ...]:
+        ret = []
+        mask = int("1" * 9 + "0", 2)        
+        for i in range(len(self.target_state) - 1, -1, -1):
+            if b2_button & mask:
+                ret.insert(0, i)
+
+            b2_button >>= 10
+
+        return tuple(ret)
+    
+    def _b2_button_presses_to_regular(self, b2_button_presses: int) -> tuple[int, ...]:
+        ret = []
+        mask = int("1" * 10, 2)        
+        for _ in range(len(self.buttons)):
+            n_presses = (b2_button_presses & mask)
+            ret.insert(0, n_presses)
+
+            b2_button_presses >>= 10
+
+        return tuple(ret)
+    
+    # @line_profiler.profile
     def configure_joltages(self) -> int:
         seen_button_presses = set()
         seen_joltages = set()
 
-        # The initial state is all joltages are 0 and no button presses
-        states = SortedKeyList(
-            [((0,) * len(self.target_joltages), SortedList())],
-            key=lambda jolt: sum(tj - j for tj, j in zip(self.target_joltages, jolt[0])),
-        )
+        b2_buttons = [(self._to_b2_button_index(b_idx), self._to_b2_button(b))
+                      for b_idx, b in enumerate(self.buttons)]
 
-        last_seen_presses = 0
+        # # The initial state is all joltages are 0 and no button presses
+        # states = SortedKeyList(
+        #     [(
+        #         (0,) * len(self.target_joltages),
+        #         tuple((button_id, 0) for button_id, _ in ordered_buttons)
+        #     )],
+        #     key=lambda jolt: sum(tj - j for tj, j in zip(self.target_joltages, jolt[0])), 
+        # )
+
+        # The initial state is all joltages are 0 (first 0) and no button presses (second 0)
+        states = deque([(0, 0)])
+
         processed = 0
         while states:
-            joltages, button_presses = states.pop(0)
+            b2_joltages, b2_button_presses = states.popleft()
 
             # Exit early once the first state matches the `self.target_joltages`
-            if joltages == self.target_joltages:
-                return len(button_presses)
+            if b2_joltages == self.target_joltages:
+                return self._count_b2_button_presses(b2_button_presses)
 
-            if last_seen_presses != len(button_presses):
-                last_seen_presses = len(button_presses)
-                # print(last_seen_presses)
+            # if last_seen_presses != len(button_presses):
+            #     last_seen_presses = len(button_presses)
+            #     # print(last_seen_presses)
 
             processed += 1
-            if not processed % 10000:
-                print(f"Processed {processed=} {len(button_presses)}")
-                if processed == 3e5:
-                    return 10
+            if not processed % 50000:
+                print(f"Processed {processed=:,}")
+                # if processed == 1e6:
+                #     return 10
 
             # Press each button and add to the `states`
-            for button in self.buttons:
-                next_joltages = self._add_joltages(joltages, button)
+            for b2_button_index, b2_button in b2_buttons:
+                next_b2_joltages = b2_joltages + b2_button
 
-                next_button_presses = button_presses.copy()
-                next_button_presses.add(button)
-                tuple_next_button_presses = tuple(next_button_presses)
+                # Increase the button press counter on the `button_id`
+                next_b2_button_presses = b2_button_presses + b2_button_index
+
+                # print("joltages", self._b2_joltages_to_regular(b2_joltages))
+                # print("button", self._b2_button_to_regular(b2_button))
+                # print("next_jolt", self._b2_joltages_to_regular(next_b2_joltages))
+                # print('----')
+                # print("button", self._b2_button_to_regular(b2_button))
+                # print("button_press", self._b2_button_presses_to_regular(b2_button_presses))
+                # print(
+                #     "next_button_press",
+                #     self._b2_button_presses_to_regular(next_b2_button_presses)
+                # )
+                # breakpoint()
 
                 # Only continue BFS if:
                 # 1. All joltages are still <= the target joltages
                 # 2. The `next_button_presses` have not been seen yet
                 # 3. The `next_joltages` have not been seen yet
                 if (
-                    tuple_next_button_presses not in seen_button_presses
-                    and next_joltages not in seen_joltages
-                    and all(
-                        next_joltages[i] <= self.target_joltages[i]
-                        for i in range(len(self.target_joltages))
-                    )
+                    not (self.target_joltages - next_b2_joltages) & self.joltage_margins
+                    and next_b2_button_presses not in seen_button_presses
+                    and next_b2_joltages not in seen_joltages
                 ):
-                    seen_button_presses.add(tuple_next_button_presses)
-                    seen_joltages.add(next_joltages)
+                    seen_button_presses.add(next_b2_button_presses)
+                    seen_joltages.add(next_b2_joltages)
 
-                    states.add((next_joltages, next_button_presses))
+                    states.append((next_b2_joltages, next_b2_button_presses))
 
         # There should always be a way to configure the joltages
         raise AssertionError()
@@ -145,7 +225,7 @@ def part2():
     with IN_FILE.open("r") as f:
         for config_line in f:
             machines.append(Machine(config_line))
-
+            
     n_presses = []
     for i, m in enumerate(machines):
         print(f"Starting {i}")
