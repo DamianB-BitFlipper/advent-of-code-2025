@@ -1,6 +1,9 @@
 ---
-time: 22
+dev_time: 22
 loc: 46
+runtime: 1.02
+cpu: 99%
+peak_memory: 12240
 ---
 # Remarks
 

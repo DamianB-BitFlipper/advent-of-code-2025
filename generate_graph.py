@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a beautiful line graph from REMARKS.md files showing time and LOC per day."""
+"""Generate a beautiful dashboard from REMARKS.md files showing dev metrics per day."""
 
 import re
 from pathlib import Path
@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 
 
 def parse_remarks_file(filepath: Path) -> dict | None:
-    """Parse a REMARKS.md file and extract time and loc from frontmatter."""
+    """Parse a REMARKS.md file and extract metrics from frontmatter."""
     content = filepath.read_text()
 
     # Match YAML frontmatter between --- delimiters
@@ -25,10 +25,41 @@ def parse_remarks_file(filepath: Path) -> dict | None:
             key, value = line.split(":", 1)
             key = key.strip()
             value = value.strip()
-            if key in ("time", "loc"):
-                data[key] = int(value)
 
-    return data if "time" in data and "loc" in data else None
+            if not value:
+                continue
+
+            try:
+                if key == "dev_time":
+                    # Handle "45m" or just "45"
+                    clean_val = value.lower().replace("m", "").strip()
+                    if clean_val:
+                        data["dev_time"] = int(clean_val)
+                elif key == "loc":
+                    data["loc"] = int(value)
+                elif key == "runtime":
+                    data["runtime"] = float(value)
+                elif key == "cpu":
+                    # Handle "99%" -> 99
+                    data["cpu"] = int(value.replace("%", ""))
+                elif key == "peak_memory":
+                    data["peak_memory"] = int(value)
+            except ValueError:
+                continue
+
+    required_keys = {"dev_time", "loc", "runtime", "cpu", "peak_memory"}
+    if not required_keys.issubset(data.keys()):
+        # Try to support legacy format if just time/loc are present?
+        # The user requested specific new format support, but let's be safe.
+        if "dev_time" in data and "loc" in data:
+            # Backfill others with 0 if missing, to allow plotting what we have
+            for k in required_keys:
+                if k not in data:
+                    data[k] = 0
+            return data
+        return None
+
+    return data
 
 
 def find_remarks_files(base_path: Path) -> list[tuple[int, dict]]:
@@ -58,240 +89,300 @@ def find_remarks_files(base_path: Path) -> list[tuple[int, dict]]:
 
 
 def generate_graph(data: list[tuple[int, dict]], output_path: Path) -> None:
-    """Generate a beautiful dual-axis line graph using Plotly."""
+    """Generate a beautiful 3-row dashboard image using Plotly."""
     if not data:
         print("No data found to plot!")
         return
 
     days = [d[0] for d in data]
-    times = [d[1]["time"] for d in data]
+    # Calculate total time in minutes first
+    raw_dev_times = [d[1]["dev_time"] for d in data]
+    total_minutes = sum(raw_dev_times)
+
+    dev_times = [t / 60 for t in raw_dev_times]  # Convert to hours for plotting
     locs = [d[1]["loc"] for d in data]
-    total_time = sum(times)
-    avg_time = round(total_time / len(times))
+    runtimes = [d[1]["runtime"] for d in data]
+    cpus = [d[1]["cpu"] for d in data]
+    # Convert KB to MB for cleaner graph
+    mems = [d[1]["peak_memory"] / 1024 for d in data]
 
-    # Format total time as hours + minutes if >= 60 minutes
-    if total_time >= 60:
-        hours, mins = divmod(total_time, 60)
-        total_time_str = f"{hours}h {mins}m" if mins else f"{hours}h"
+    # Format total time
+    if total_minutes >= 60:
+        hours, mins = divmod(total_minutes, 60)
+        total_time_str = f"{int(hours)}h {int(mins)}m" if mins else f"{int(hours)}h"
     else:
-        total_time_str = f"{total_time}m"
+        total_time_str = f"{total_minutes}m"
 
-    # Format average time in minutes
-    avg_time_str = f"{avg_time}m"
+    # Create subplot with 3 rows
+    # Row 1: Dev Time & LOC (Double Axis)
+    # Row 2: Runtime (Single Axis)
+    # Row 3: Memory & CPU (Double Axis)
+    fig = make_subplots(
+        rows=3,
+        cols=2,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        horizontal_spacing=0.03,
+        specs=[
+            [{"colspan": 2, "secondary_y": True}, None],
+            [{"secondary_y": False}, {"secondary_y": False}],
+            [{"colspan": 2, "secondary_y": True}, None],
+        ],
+        subplot_titles=(
+            "<b>Time Spent Solving & Lines of Code</b>",
+            " ",
+            " ",
+            "<b>Memory & CPU Usage</b>",
+        ),
+    )
 
-    # Create figure with secondary y-axis
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_annotation(
+        text="<b>Runtime Duration (MacBook Air M2)</b>",
+        x=0.5,
+        y=0.64,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        font={"size": 18, "color": "#e2e8f0"},
+        xanchor="center",
+        yanchor="bottom",
+    )
 
-    # LOC trace (secondary y-axis) - added first so Time marker renders on top
+    # --- ROW 1: Development Effort ---
+
+    # Trace 1: Dev Time (Green) - Primary Y
+    fig.add_trace(
+        go.Scatter(
+            x=days,
+            y=dev_times,
+            name="Dev Time",
+            mode="lines+markers",
+            line={"color": "#34d399", "width": 3, "shape": "spline"},
+            marker={"size": 10, "color": "#111b2d", "line": {"color": "#34d399", "width": 2}},
+            fill="tozeroy",
+            fillcolor="rgba(52, 211, 153, 0.1)",
+            hovertemplate="Dev Time: %{y:.1f} hrs",
+        ),
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+
+    # Trace 2: LOC (Amber) - Secondary Y
     fig.add_trace(
         go.Scatter(
             x=days,
             y=locs,
             name="Lines of Code",
-            mode="lines+markers",  # Removed "+text" to reduce clutter
-            line={
-                "color": "#fbbf24",  # Brighter Amber
-                "width": 3,
-                "shape": "spline",
-                "smoothing": 1.0,  # Adjusted smoothing
-            },
+            mode="lines+markers",
+            line={"color": "#fbbf24", "width": 3, "shape": "spline", "dash": "dot"},
             marker={
-                "size": 16,
-                "color": "#111b2d",  # Match plot_bgcolor for cutout effect
-                "line": {"color": "#fbbf24", "width": 3},
+                "size": 10,
                 "symbol": "diamond",
+                "color": "#111b2d",
+                "line": {"color": "#fbbf24", "width": 2},
             },
-            fill="tozeroy",  # Add area fill
-            fillcolor="rgba(251, 191, 36, 0.1)",  # Subtle amber tint
-            hovertemplate="<b>Day %{x}</b><br>LOC: %{y}<extra></extra>",
-            legendrank=2,
-            cliponaxis=False,
+            hovertemplate="LoC: %{y}",
         ),
+        row=1,
+        col=1,
         secondary_y=True,
     )
 
-    # Time trace (primary y-axis) - added second so it renders on top
+    # --- ROW 2: Execution Speed ---
+
+    # Trace 3: Runtime (Cyan) - Linear
     fig.add_trace(
         go.Scatter(
             x=days,
-            y=times,
-            name="Time (min)",
-            mode="lines+markers",  # Removed "+text"
-            line={
-                "color": "#34d399",  # Brighter Emerald
-                "width": 3,
-                "shape": "spline",
-                "smoothing": 1.0,
-            },
-            marker={
-                "size": 16,
-                "color": "#111b2d",  # Match plot_bgcolor for cutout effect
-                "line": {"color": "#34d399", "width": 3},
-                "symbol": "circle",
-            },
-            fill="tozeroy",  # Add area fill
-            fillcolor="rgba(52, 211, 153, 0.1)",  # Subtle emerald tint
-            hovertemplate="<b>Day %{x}</b><br>Time: %{y} min<extra></extra>",
-            legendrank=1,
-            cliponaxis=False,
+            y=runtimes,
+            name="Runtime (Linear)",
+            mode="lines+markers",
+            line={"color": "#22d3ee", "width": 3, "shape": "spline"},
+            marker={"size": 10, "color": "#111b2d", "line": {"color": "#22d3ee", "width": 2}},
+            fill="tozeroy",
+            fillcolor="rgba(34, 211, 238, 0.1)",
+            hovertemplate="Runtime: %{y:.3f}s",
+            showlegend=True,
         ),
+        row=2,
+        col=1,
+    )
+
+    # Trace 3b: Runtime (Cyan) - Log
+    fig.add_trace(
+        go.Scatter(
+            x=days,
+            y=runtimes,
+            name="Runtime (Log)",
+            mode="lines+markers",
+            line={"color": "#22d3ee", "width": 3, "shape": "spline"},
+            marker={"size": 10, "color": "#111b2d", "line": {"color": "#22d3ee", "width": 2}},
+            fill="tozeroy",
+            fillcolor="rgba(34, 211, 238, 0.1)",
+            hovertemplate="Runtime: %{y:.3f}s",
+            showlegend=False,
+        ),
+        row=2,
+        col=2,
+    )
+
+    # --- ROW 3: System Efficiency ---
+
+    # Trace 4: Memory (Purple) - Primary Y
+    fig.add_trace(
+        go.Scatter(
+            x=days,
+            y=mems,
+            name="Memory (MB)",
+            mode="lines+markers",
+            line={"color": "#c084fc", "width": 3, "shape": "spline"},
+            marker={"size": 10, "color": "#111b2d", "line": {"color": "#c084fc", "width": 2}},
+            fill="tozeroy",
+            fillcolor="rgba(192, 132, 252, 0.1)",
+            hovertemplate="Mem: %{y:.1f} MB",
+        ),
+        row=3,
+        col=1,
         secondary_y=False,
     )
 
-    # Update layout for mobile/Twitter optimized dark theme
+    # Trace 5: CPU (Red/Rose) - Secondary Y
+    fig.add_trace(
+        go.Scatter(
+            x=days,
+            y=cpus,
+            name="CPU Usage",
+            mode="lines+markers",
+            line={"color": "#f43f5e", "width": 3, "shape": "spline", "dash": "dot"},
+            marker={
+                "size": 10,
+                "symbol": "square",
+                "color": "#111b2d",
+                "line": {"color": "#f43f5e", "width": 2},
+            },
+            hovertemplate="CPU: %{y}%",
+        ),
+        row=3,
+        col=1,
+        secondary_y=True,
+    )
+
+    # --- Styling & Layout ---
+
     fig.update_layout(
         title={
-            "text": "<b>Advent of Code 2025</b>",
-            "font": {"size": 40, "color": "#f8fafc", "family": "system-ui, sans-serif"},
+            "text": f"<b>Advent of Code 2025</b><br><span style='font-size: 20px; color: #94a3b8;'>Total Time Spent Solving: {total_time_str}</span>",
+            "font": {"size": 36, "color": "#f8fafc", "family": "system-ui, sans-serif"},
+            "y": 0.97,
             "x": 0.5,
             "xanchor": "center",
             "yanchor": "top",
-            "y": 0.98,
         },
-        annotations=[
-            {
-                "text": f"Total Time Spent: {total_time_str}",
-                "xref": "paper",
-                "yref": "paper",
-                "x": 0.5,
-                "y": 1.17,
-                "showarrow": False,
-                "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
-                "xanchor": "center",
-            },
-            {
-                "text": f"Average Time Per Problem: {avg_time_str}",
-                "xref": "paper",
-                "yref": "paper",
-                "x": 0.5,
-                "y": 1.14,
-                "showarrow": False,
-                "font": {"size": 24, "color": "#f8fafc", "family": "system-ui, sans-serif"},
-                "xanchor": "center",
-            },
-        ],
-        font={"family": "system-ui, sans-serif", "color": "#e2e8f0", "size": 18},
+        annotations=[],
+        font={"family": "system-ui, sans-serif", "color": "#e2e8f0", "size": 14},
         paper_bgcolor="#0b1120",
         plot_bgcolor="#111b2d",
         hovermode="x unified",
+        showlegend=True,
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": -0.17,
+            "y": -0.06,
             "xanchor": "center",
             "x": 0.5,
-            "bgcolor": "rgba(15, 23, 42, 0.9)",
-            "bordercolor": "#1f2937",
-            "borderwidth": 1,
-            "font": {"size": 22},
-            "itemwidth": 90,
-        },
-        margin={"l": 140, "r": 140, "t": 220, "b": 210},
-        hoverlabel={
-            "bgcolor": "#1f2937",
-            "font_size": 16,
-            "font_family": "JetBrains Mono, monospace",
+            "bgcolor": "rgba(15, 23, 42, 0.8)",
             "bordercolor": "#334155",
+            "borderwidth": 1,
+            "font": {"size": 14},
         },
+        margin={"l": 100, "r": 40, "t": 140, "b": 120},
         width=1080,
-        height=1350,
-        autosize=False,
+        height=1620,
     )
 
-    # Update axes
-    # Calculate sensible x-axis range
-    if len(days) == 1:
-        x_min, x_max = days[0] - 1, days[0] + 1
-    else:
-        x_padding = max(0.5, (max(days) - min(days)) * 0.1)
-        x_min, x_max = min(days) - x_padding, max(days) + x_padding
-
+    # Update Axes Style
+    # Common X-Axis settings
     fig.update_xaxes(
-        title_text="<b>Day</b>",
-        title_font={"size": 18, "color": "#94a3b8"},
-        tickfont={"size": 16, "color": "#cbd5e1"},
-        tickmode="array",
-        tickvals=days,
-        ticktext=[f"{d}" for d in days],
-        gridcolor="#334155",
-        gridwidth=1,
-        griddash="dot",  # Dashed vertical lines
-        zeroline=False,
-        showline=False,  # Remove solid axis line
-        range=[x_min, x_max],
-        ticklen=8,
-        tickcolor="#334155",
-        ticklabelstandoff=8,
-    )
-
-    # Calculate sensible y-axis ranges with nice round numbers
-    import math
-
-    def nice_range(values, padding=0.2):
-        """Calculate a nice axis range with round tick values."""
-        v_min, v_max = min(values), max(values)
-        v_range = v_max - v_min if v_max != v_min else v_max * 0.5
-        padded_min = v_min - v_range * padding
-        padded_max = v_max + v_range * padding
-        # Round to nice values
-        magnitude = 10 ** math.floor(math.log10(max(abs(padded_max), 1)))
-        nice_min = math.floor(padded_min / magnitude) * magnitude
-        nice_max = math.ceil(padded_max / magnitude) * magnitude
-        if nice_max == nice_min:
-            nice_max = nice_min + magnitude
-        return max(0, nice_min), nice_max
-
-    time_min, time_max = nice_range(times)
-    loc_min, loc_max = nice_range(locs)
-
-    # Primary y-axis (Time)
-    fig.update_yaxes(
-        title_text="<b>Time (minutes)</b>",
-        title_font={"size": 18, "color": "#34d399"},
-        tickfont={"size": 16, "color": "#34d399"},
-        gridcolor="#334155",
-        gridwidth=1,
-        griddash="dot",
+        gridcolor="#1e293b",
         zeroline=False,
         showline=False,
+        tickfont={"size": 14, "color": "#94a3b8"},
+        tickmode="linear",
+        tick0=1,
+        dtick=1,
+    )
+
+    # Row 1 Axes
+    fig.update_yaxes(
+        title_text="Time Spent Solving (Hours)",
+        title_font={"color": "#34d399"},
+        tickfont={"color": "#34d399"},
+        gridcolor="#1e293b",
+        rangemode="tozero",
+        row=1,
+        col=1,
         secondary_y=False,
-        range=[time_min, time_max],
-        ticklen=8,
-        tickcolor="#334155",
     )
-
-    # Secondary y-axis (LOC)
     fig.update_yaxes(
-        title_text="<b>Lines of Code</b>",
-        title_font={"size": 18, "color": "#fbbf24"},
-        tickfont={"size": 16, "color": "#fbbf24"},
-        showgrid=False,  # Hide secondary grid to prevent visual clutter
-        zeroline=False,
-        showline=False,
+        title_text="LoC",
+        title_font={"color": "#fbbf24"},
+        tickfont={"color": "#fbbf24"},
+        showgrid=False,
+        rangemode="tozero",
+        row=1,
+        col=1,
         secondary_y=True,
-        range=[loc_min, loc_max],
-        overlaying="y",
+    )
+
+    # Row 2 Axes
+    fig.update_yaxes(
+        title_text="Seconds",
+        title_font={"color": "#22d3ee"},
+        tickfont={"color": "#22d3ee"},
+        gridcolor="#1e293b",
+        rangemode="tozero",
+        row=2,
+        col=1,
+    )
+    fig.update_yaxes(
+        title_text="Seconds (Log)",
+        title_font={"color": "#22d3ee"},
+        tickfont={"color": "#22d3ee"},
+        gridcolor="#1e293b",
+        type="log",
         side="right",
-        ticklen=8,
-        tickcolor="#334155",
+        row=2,
+        col=2,
     )
 
-    # Add subtle gradient effect with shapes
-    fig.add_shape(
-        type="rect",
-        xref="paper",
-        yref="paper",
-        x0=0,
-        y0=0,
-        x1=1,
-        y1=1,
-        fillcolor="rgba(15, 23, 42, 0)",
-        line={"width": 0},
-        layer="below",
+    # Row 3 Axes
+    fig.update_yaxes(
+        title_text="Peak Memory (MB)",
+        title_font={"color": "#c084fc"},
+        tickfont={"color": "#c084fc"},
+        gridcolor="#1e293b",
+        rangemode="tozero",
+        row=3,
+        col=1,
+        secondary_y=False,
+    )
+    fig.update_yaxes(
+        title_text="CPU Utilization",
+        title_font={"color": "#f43f5e"},
+        tickfont={"color": "#f43f5e"},
+        showgrid=False,
+        rangemode="tozero",
+        row=3,
+        col=1,
+        secondary_y=True,
     )
 
-    # Save as PNG - 4:5 aspect ratio plays well on Twitter mobile
-    fig.write_image(str(output_path), width=1080, height=1350, scale=2)
+    # Customizing Subplot Titles
+    fig.update_annotations(font={"size": 18, "color": "#e2e8f0"})
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.write_image(str(output_path), width=1080, height=1620, scale=2)
     print(f"Graph saved to: {output_path}")
 
 
@@ -303,14 +394,11 @@ def main():
     data = find_remarks_files(base_path)
 
     if not data:
-        print("No REMARKS.md files with valid frontmatter found!")
+        print("No REMARKS.md files with valid data found!")
         return
 
-    print(f"Found {len(data)} day(s) with data:")
-    for day, info in data:
-        print(f"  Day {day}: {info['time']} min, {info['loc']} LOC")
-
-    print("\nGenerating graph...")
+    print(f"Found {len(data)} day(s) with data.")
+    print("\nGenerating dashboard...")
     generate_graph(data, output_path)
 
 

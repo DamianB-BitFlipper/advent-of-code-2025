@@ -12,6 +12,7 @@ dependencies = [
     "memory-profiler>=0.61.0",
     "numpy>=2.3.5",
     "pulp>=3.3.0",
+    "fire>=0.7.1",
 ]
 
 [dependency-groups]

@@ -1,10 +1,15 @@
 import re
 from collections import deque
 from pathlib import Path
-import numpy as np
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+import pulp as pl
+
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
+
+# Tell the solver to not log
+no_log_solver = pl.PULP_CBC_CMD(msg=False)
+
 
 class Machine:
     def __init__(self, configuration: str) -> None:
@@ -69,80 +74,38 @@ class Machine:
         # There should always be a way to turn on the machine
         raise AssertionError()
 
-    def _gaussian_eliminate(self, aug_matrix: np.array) -> np.array:
-        for bi in range(len(self.buttons)):
-            # Get the index of the first row with index `>= bi`
-            # with a non-zero value at column `bi`
-            pivot_candidates = np.nonzero(aug_matrix[bi:, bi])[0]
-            if pivot_candidates.size:
-                first_row = pivot_candidates[0] + bi
-            else:
-                breakpoint()
-
-            # If the `first_row` is not `bi` already, swap it to this position
-            if first_row != bi:
-                aug_matrix[[bi, first_row]] = aug_matrix[[first_row, bi]]
-
-            # Scale the row at `bi` so that the column value at `bi` is 1            
-            if aug_matrix[bi, bi] != 1:
-                # Assert that all values divide evenly
-                assert np.all(aug_matrix[bi] % aug_matrix[bi, bi] == 0)
-                
-                aug_matrix[bi] //= aug_matrix[bi, bi]
-
-            # For all rows below `bi` with non-zero values at `bi`,
-            # use subtraction to make them 0
-            for r in range(bi + 1, aug_matrix.shape[0]):
-                factor = aug_matrix[r, bi]
-                aug_matrix[r] -= factor * aug_matrix[bi]
-
-        # Assert that the `aug_matrix` is now in "row-echelon" form
-        assert np.all(np.diag(aug_matrix[:, :len(self.buttons)]) == 1)
-
-        # A row is impossible if all coeffs are zero AND the RHS is nonzero
-        no_solution_mask = (np.all(aug_matrix[:, :-1] == 0, axis=1) & (aug_matrix[:, -1] != 0))
-        assert not np.any(no_solution_mask)
-        
-        # Now use back substitute from bottom up
-        solutions = aug_matrix[:, -1]
-        for bi in range(len(self.buttons) - 1, -1, -1):
-            solutions[bi] -= np.dot(
-                aug_matrix[bi, bi + 1 : len(self.buttons)],
-                solutions[bi + 1 : len(self.buttons)]
-            )
-
-        # Assert that all solutions are >= 0
-        assert np.all(solutions >= 0)
-
-        return solutions
-    
     # @line_profiler.profile
     def configure_joltages(self) -> int:
-        # Each button gets an index
-        buttons_with_ids = list(enumerate(self.buttons))
-        
-        # The target joltages can be solved as a system of linear equations using linear algebra.
-        # Each joltage gets its own equation with its target as the answer. The unknowns are
-        # the button_ids that affect this joltage.
-        # The coefficient matrix is of size `len(self.target_joltages) X len(self.buttons)`
-        coeff_matrix = np.zeros((len(self.target_joltages), len(self.buttons)), dtype=int)
+        # Each button is its own LP variable
+        buttons_lp = []
+        for bi in range(len(self.buttons)):
+            buttons_lp.append(pl.LpVariable(f"b{bi}", lowBound=0, cat="Integer"))
 
-        # Fill in the `coeff_matrix`
-        for i in range(len(self.target_joltages)):
-            for button_id, button in buttons_with_ids:
-                if i in button:
-                    coeff_matrix[i, button_id] = 1
+        # Build the optimization problem
+        prob = pl.LpProblem("demo", pl.LpMinimize)
 
-        # The answers matrix is of size `len(self.target_joltages) X 1`
-        # The augmented matrix is of size `len(self.target_joltages) X (len(self.buttons) + 1)`
-        answers = np.array(self.target_joltages).reshape(-1, 1)
-        aug_matrix = np.hstack((coeff_matrix, answers))
+        # There are `len(self.target_joltages)` number of constraints
+        for j, target_joltage in enumerate(self.target_joltages):
+            expr = pl.LpAffineExpression()
 
-        # Gaussian eliminate the `aug_matrix`
-        solutions = self._gaussian_eliminate(aug_matrix)
+            # For each button that has `j`, add it to this constraint
+            for bi, button in enumerate(self.buttons):
+                if j in button:
+                    expr += buttons_lp[bi]
 
-        # The number of button presses is the sum of the `solutions`
-        return np.sum(solutions)
+            # Finally this expression must equal the `target_joltage`
+            prob += expr == target_joltage
+
+        # After adding all of the constraints, add the condition we want to minimize
+        # which is the sum of all of the button variables (representing number of presses)
+        prob += sum(buttons_lp)
+
+        # Solve the problem
+        prob.solve(no_log_solver)
+
+        # The minimum number of presses is in the values of `buttons_lp`. These are integer
+        # values as floats due to solver internals. Round as a result to convert to an int.
+        return sum(round(b.value()) for b in buttons_lp)
 
 
 def part1():
@@ -160,14 +123,7 @@ def part2():
         for config_line in f:
             machines.append(Machine(config_line))
 
-    n_presses = []
-    for i, m in enumerate(machines):
-        print(f"Starting {i}")
-        n_presses.append(m.configure_joltages())
-        print(f"Finished {i} / {len(machines) - 1}")
-
-    print(f"Part 2 {sum(n_presses)}")
-    # print(f"Part 2 minimum joltage presses: {sum(m.configure_joltages() for m in machines)}")
+    print(f"Part 2 minimum joltage presses: {sum(m.configure_joltages() for m in machines)}")
 
 
 if __name__ == "__main__":
