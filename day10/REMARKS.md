@@ -7,15 +7,19 @@ peak_memory: 21856
 ---
 # Remarks
 
-Part 2 today was actually insane. I did not think it could get harder than yesterday's part 2, but it did! It took me 3 distinct structural overhauls to solve, and I had to venture deep in to theoretical topics. I can only wonder what future Part 2's will be like. Part 1 was also difficult, but manageable.
+Part 2 today was actually insane. I did not think it could get any harder than yesterday's part 2, but it did! It took me 3 distinct structural overhauls to solve, and I had to venture deep in to theoretical topics. Part 1 was also difficult, but manageable.
 
-For Part 1, it was rather obvious to me that the approach would be a BFS through the button press search space to get to the target indicator positions. My first attempt was exactly the BFS approach, which worked flawlessly for the small input. But for the large input, it was taking too long. After inspecting the states, I came to the realization (which in retrospect is quite obvious), that once an indicator state repeats, there is no more need to try to continue this state. The invariant is that if it repeats, then a previous path of button presses is able to get to the same state, but in fewer presses. Once I added a `seen` set, the algorithm ran quickly and passed Part 1.
+For Part 1, it was rather obvious to me that the approach would be a BFS through the button press search space to get to the target indicator positions. My first attempt worked flawlessly for the small input. But for the large input, it took too long. 
+
+After inspecting the states, I came to the realization (which in retrospect is quite obvious), that once an indicator state repeats, there is no more need to try to continue searching deeper in to this state. 
+
+The invariant is that if it repeats, then a previous path of button presses reached the same state, but in fewer presses. Once I added a `seen` set, the algorithm ran quickly and passed Part 1.
 
 When I read Part 2, it at first seemed like a slight variation to Part 1 and that with a few small tweaks, I would get the solution. In fact, I was so confident, I thought that it was odd that Part 1 would be more difficult than Part 2. But boy was I WRONG.
 
-My first approach was a similar BFS, but instead of a `seen` set, I would check if any joltage surpassed the target joltage and stop the branch's search there. That worked for the small input, but was taking impossibly long for even the first machine of the full input. Looking at that machine's definition, I found it odd that it was not massive, but actually reasonably small in side.
+My first approach was a similar BFS, but instead of a `seen` set, I would check if any joltage surpassed the target joltage and stop the branch's search there. That worked for the small input, but was taking impossibly long for even the first machine of the full input. 
 
-So I looked deeper at my BFS algorithm to see if I could prune the search space even further. I did find a number of pruning approaches that did narrowed down the search space.
+Looking at that machine's definition, I found it odd that it was not massive, but actually reasonably small in side. So I looked deeper at my BFS algorithm to see if I could prune the search space even further. I did find a number of pruning approaches that did narrowed down the search space.
 
 1. Add the intermediate joltage configurations to a `seen` set. The idea being that if we have seen the current joltage configuration before, there must be a path with less button presses.
 
