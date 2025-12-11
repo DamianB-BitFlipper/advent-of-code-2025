@@ -1,11 +1,10 @@
 import re
 from collections import deque
 from pathlib import Path
+import numpy as np
 
-import line_profiler
-
-# IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./demo_input.txt")
+# IN_FILE = Path("./full_input.txt")
 
 class Machine:
     def __init__(self, configuration: str) -> None:
@@ -30,13 +29,11 @@ class Machine:
         joltages_match = re.search(r"\{(\d[\d,]*)\}", rest_config)
         assert joltages_match
 
-        target_b2_joltages = ""
-        b2_joltage_margins = ""
+        target_joltages = []
         for j in joltages_match.group(1).split(","):
-            target_b2_joltages += format(int(j), '09b') + "0"
-            b2_joltage_margins += "0" * 9 + "1"
-        self.target_b2_joltages = int(target_b2_joltages, 2)
-        self.b2_joltage_margins = int(b2_joltage_margins, 2)
+            target_joltages.append(int(j))
+
+        self.target_joltages = tuple(target_joltages)
 
     @staticmethod
     def _toggle_indicators(indicators: tuple[int, ...], button: tuple[int, ...]) -> tuple[int, ...]:
@@ -72,143 +69,80 @@ class Machine:
         # There should always be a way to turn on the machine
         raise AssertionError()
 
-    def _to_b2_button(self, button: tuple[int, ...]) -> int:
-        ret_b2_button_str = ""
-        for i in range(len(self.target_state)):
-            if i in button:
-                ret_b2_button_str += "0" * 8 + "1" + "0"
+    def _gaussian_eliminate(self, aug_matrix: np.array) -> np.array:
+        for bi in range(len(self.buttons)):
+            # Get the index of the first row with index `>= bi`
+            # with a non-zero value at column `bi`
+            pivot_candidates = np.nonzero(aug_matrix[bi:, bi])[0]
+            if pivot_candidates.size:
+                first_row = pivot_candidates[0] + bi
             else:
-                ret_b2_button_str += "0" * 10
+                breakpoint()
 
-        return int(ret_b2_button_str, 2)
+            # If the `first_row` is not `bi` already, swap it to this position
+            if first_row != bi:
+                aug_matrix[[bi, first_row]] = aug_matrix[[first_row, bi]]
 
-    def _to_b2_button_index(self, button_index: int) -> int:
-        ret_b2_button_index_str = ""
-        for i in range(len(self.buttons)):
-            if i == button_index:
-                ret_b2_button_index_str += "0" * 9 + "1"
-            else:
-                ret_b2_button_index_str += "0" * 10
+            # Scale the row at `bi` so that the column value at `bi` is 1            
+            if aug_matrix[bi, bi] != 1:
+                # Assert that all values divide evenly
+                assert np.all(aug_matrix[bi] % aug_matrix[bi, bi] == 0)
+                
+                aug_matrix[bi] //= aug_matrix[bi, bi]
 
-        return int(ret_b2_button_index_str, 2)
+            # For all rows below `bi` with non-zero values at `bi`,
+            # use subtraction to make them 0
+            for r in range(bi + 1, aug_matrix.shape[0]):
+                factor = aug_matrix[r, bi]
+                aug_matrix[r] -= factor * aug_matrix[bi]
 
-    @staticmethod
-    def _count_b2_button_presses(b2_button_presses: int) -> int:
-        ret_count = 0
-        mask = int("1" * 10, 2)
+        # Assert that the `aug_matrix` is now in "row-echelon" form
+        assert np.all(np.diag(aug_matrix[:, :len(self.buttons)]) == 1)
 
-        while b2_button_presses:
-            ret_count += (b2_button_presses & mask)
-            b2_button_presses >>= 10
+        # A row is impossible if all coeffs are zero AND the RHS is nonzero
+        no_solution_mask = (np.all(aug_matrix[:, :-1] == 0, axis=1) & (aug_matrix[:, -1] != 0))
+        assert not np.any(no_solution_mask)
+        
+        # Now use back substitute from bottom up
+        solutions = aug_matrix[:, -1]
+        for bi in range(len(self.buttons) - 1, -1, -1):
+            solutions[bi] -= np.dot(
+                aug_matrix[bi, bi + 1 : len(self.buttons)],
+                solutions[bi + 1 : len(self.buttons)]
+            )
 
-        return ret_count
+        # Assert that all solutions are >= 0
+        assert np.all(solutions >= 0)
 
-    def _b2_joltages_to_regular(self, b2_joltages: int) -> tuple[int, ...]:
-        ret = []
-        mask = int("1" * 9 + "0", 2)        
-        for _ in range(len(self.target_state)):
-            joltage = (b2_joltages & mask) >> 1
-            ret.insert(0, joltage)
-
-            b2_joltages >>= 10
-
-        return tuple(ret)
-
-    def _b2_button_to_regular(self, b2_button: int) -> tuple[int, ...]:
-        ret = []
-        mask = int("1" * 9 + "0", 2)        
-        for i in range(len(self.target_state) - 1, -1, -1):
-            if b2_button & mask:
-                ret.insert(0, i)
-
-            b2_button >>= 10
-
-        return tuple(ret)
-    
-    def _b2_button_presses_to_regular(self, b2_button_presses: int) -> tuple[int, ...]:
-        ret = []
-        mask = int("1" * 10, 2)        
-        for _ in range(len(self.buttons)):
-            n_presses = (b2_button_presses & mask)
-            ret.insert(0, n_presses)
-
-            b2_button_presses >>= 10
-
-        return tuple(ret)
+        return solutions
     
     # @line_profiler.profile
     def configure_joltages(self) -> int:
-        seen_button_presses = set()
-        seen_joltages = set()
+        # Each button gets an index
+        buttons_with_ids = list(enumerate(self.buttons))
+        
+        # The target joltages can be solved as a system of linear equations using linear algebra.
+        # Each joltage gets its own equation with its target as the answer. The unknowns are
+        # the button_ids that affect this joltage.
+        # The coefficient matrix is of size `len(self.target_joltages) X len(self.buttons)`
+        coeff_matrix = np.zeros((len(self.target_joltages), len(self.buttons)), dtype=int)
 
-        b2_buttons = [(self._to_b2_button_index(b_idx), self._to_b2_button(b))
-                      for b_idx, b in enumerate(self.buttons)]
+        # Fill in the `coeff_matrix`
+        for i in range(len(self.target_joltages)):
+            for button_id, button in buttons_with_ids:
+                if i in button:
+                    coeff_matrix[i, button_id] = 1
 
-        # # The initial state is all joltages are 0 and no button presses
-        # states = SortedKeyList(
-        #     [(
-        #         (0,) * len(self.target_joltages),
-        #         tuple((button_id, 0) for button_id, _ in ordered_buttons)
-        #     )],
-        #     key=lambda jolt: sum(tj - j for tj, j in zip(self.target_joltages, jolt[0])), 
-        # )
+        # The answers matrix is of size `len(self.target_joltages) X 1`
+        # The augmented matrix is of size `len(self.target_joltages) X (len(self.buttons) + 1)`
+        answers = np.array(self.target_joltages).reshape(-1, 1)
+        aug_matrix = np.hstack((coeff_matrix, answers))
 
-        # The initial state is all joltages are 0 (first 0) and no button presses (second 0)
-        states = deque([(0, 0)])
+        # Gaussian eliminate the `aug_matrix`
+        solutions = self._gaussian_eliminate(aug_matrix)
 
-        processed = 0
-        while states:
-            b2_joltages, b2_button_presses = states.popleft()
-
-            # Exit early once the first state matches the `self.target_joltages`
-            if b2_joltages == self.target_b2_joltages:
-                return self._count_b2_button_presses(b2_button_presses)
-
-            # if last_seen_presses != len(button_presses):
-            #     last_seen_presses = len(button_presses)
-            #     # print(last_seen_presses)
-
-            processed += 1
-            if not processed % 50000:
-                print(f"Processed {processed=:,}")
-                # if processed == 1e6:
-                #     return 10
-
-            # Press each button and add to the `states`
-            for b2_button_index, b2_button in b2_buttons:
-                next_b2_joltages = b2_joltages + b2_button
-
-                # Increase the button press counter on the `button_id`
-                next_b2_button_presses = b2_button_presses + b2_button_index
-
-                # print("joltages", self._b2_joltages_to_regular(b2_joltages))
-                # print("button", self._b2_button_to_regular(b2_button))
-                # print("next_jolt", self._b2_joltages_to_regular(next_b2_joltages))
-                # print('----')
-                # print("button", self._b2_button_to_regular(b2_button))
-                # print("button_press", self._b2_button_presses_to_regular(b2_button_presses))
-                # print(
-                #     "next_button_press",
-                #     self._b2_button_presses_to_regular(next_b2_button_presses)
-                # )
-                # breakpoint()
-
-                # Only continue BFS if:
-                # 1. All joltages are still <= the target joltages
-                # 2. The `next_button_presses` have not been seen yet
-                # 3. The `next_joltages` have not been seen yet
-                if (
-                    not (self.target_b2_joltages - next_b2_joltages) & self.b2_joltage_margins
-                    and next_b2_button_presses not in seen_button_presses
-                    and next_b2_joltages not in seen_joltages
-                ):
-                    seen_button_presses.add(next_b2_button_presses)
-                    seen_joltages.add(next_b2_joltages)
-
-                    states.append((next_b2_joltages, next_b2_button_presses))
-
-        # There should always be a way to configure the joltages
-        raise AssertionError()
+        # The number of button presses is the sum of the `solutions`
+        return np.sum(solutions)
 
 
 def part1():
@@ -226,8 +160,6 @@ def part2():
         for config_line in f:
             machines.append(Machine(config_line))
 
-    breakpoint()
-            
     n_presses = []
     for i, m in enumerate(machines):
         print(f"Starting {i}")
