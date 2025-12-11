@@ -4,8 +4,8 @@ from pathlib import Path
 
 import line_profiler
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
 
 class Machine:
     def __init__(self, configuration: str) -> None:
@@ -30,13 +30,13 @@ class Machine:
         joltages_match = re.search(r"\{(\d[\d,]*)\}", rest_config)
         assert joltages_match
 
-        target_joltages = ""
-        joltage_margins = ""
+        target_b2_joltages = ""
+        b2_joltage_margins = ""
         for j in joltages_match.group(1).split(","):
-            target_joltages += format(int(j), '09b') + "0"
-            joltage_margins += "0" * 9 + "1"
-        self.target_joltages = int(target_joltages, 2)
-        self.joltage_margins = int(joltage_margins, 2)
+            target_b2_joltages += format(int(j), '09b') + "0"
+            b2_joltage_margins += "0" * 9 + "1"
+        self.target_b2_joltages = int(target_b2_joltages, 2)
+        self.b2_joltage_margins = int(b2_joltage_margins, 2)
 
     @staticmethod
     def _toggle_indicators(indicators: tuple[int, ...], button: tuple[int, ...]) -> tuple[int, ...]:
@@ -161,7 +161,7 @@ class Machine:
             b2_joltages, b2_button_presses = states.popleft()
 
             # Exit early once the first state matches the `self.target_joltages`
-            if b2_joltages == self.target_joltages:
+            if b2_joltages == self.target_b2_joltages:
                 return self._count_b2_button_presses(b2_button_presses)
 
             # if last_seen_presses != len(button_presses):
@@ -198,7 +198,7 @@ class Machine:
                 # 2. The `next_button_presses` have not been seen yet
                 # 3. The `next_joltages` have not been seen yet
                 if (
-                    not (self.target_joltages - next_b2_joltages) & self.joltage_margins
+                    not (self.target_b2_joltages - next_b2_joltages) & self.b2_joltage_margins
                     and next_b2_button_presses not in seen_button_presses
                     and next_b2_joltages not in seen_joltages
                 ):
@@ -225,6 +225,8 @@ def part2():
     with IN_FILE.open("r") as f:
         for config_line in f:
             machines.append(Machine(config_line))
+
+    breakpoint()
             
     n_presses = []
     for i, m in enumerate(machines):
