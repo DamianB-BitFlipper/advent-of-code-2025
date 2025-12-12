@@ -1,23 +1,15 @@
 # Advent of Code 2025
 
-My solutions for Advent of Code 2025.
+![Progress](progress.png)
 
-## Counting Lines of Code
+My solutions for [Advent of Code 2025](https://adventofcode.com/2025), written in Python.
 
-To count lines of code for a specific day's solution, navigate to the respective day directory and run:
-
-```bash
-cloc . --exclude-lang=Text,Markdown
-```
-
-## Generating the Progress Chart
-
-To generate the progress chart (`progress.png`), run:
+## Usage
 
 ```bash
+# Run a specific day's solution
+python day1/safe_cracker.py
+
+# Generate the progress chart
 python generate_graph.py
 ```
-
-## Generating a Tweet
-
-Use the `/tweet` command to generate a tweet summarizing your progress.
