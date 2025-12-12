@@ -13,3 +13,4 @@ wheels/
 # Since these files can be quite large
 full_input.txt
 profile_output*
+demo_input*.txt
