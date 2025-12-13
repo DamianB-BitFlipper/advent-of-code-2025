@@ -18,51 +18,96 @@ class ColumnHeader:
         self.n_elems = 0
         
         self.head_elem = None
-        self.tail_elem = None
-        
 
-    def add_elem2d(self, elem: Elem2D):
+    def relink(self, elem: Elem2D):
+        """Re-links the `elem` to this column."""
         self.n_elems += 1
-        
-        # If this is the first `elem`, mark it also as both the `head_elem` and `tail_elem`
-        if self.head_elem is None:
+
+        # If the `elem.down` is the current head or there is no head element,
+        # then we were the head before our removal
+        if elem.down is self.head_elem or not self.head_elem:
             self.head_elem = elem
 
-            assert self.tail_elem is None
-            self.tail_elem = elem
+        # Re-add the `elem` to the 2D list structure vertically
+        elem.up.down = elem
+        elem.down.up = elem
+
+    def unlink(self, elem):
+        # Check to see if we should move the head element of `self`
+        if self.head_elem is elem:
+            # If we are the last element of this circular list
+            if elem.down is elem:
+                self.head_elem = None
+            else:
+                self.head_elem = elem.down
+
+        # Decrement the element counter
+        self.n_elems -= 1
+
+        # Remove ourselves from the 2D list structure vertically
+        elem.up.down = elem.down
+        elem.down.up = elem.up
+
+    def init_elem2d(self, elem: Elem2D):
+        """Adds an `elem` to the bottom of the column."""
+        self.n_elems += 1
+        
+        # If this is the first `elem`, just mark it as the `head_elem`
+        if self.head_elem is None:
+            self.head_elem = elem
         else:
-            assert self.tail_elem is not None
+            # Link `elem` to `head_elem.up` which is the tail of the list
+            old_tail = self.head_elem.up
             
-            # Link the `elem` to the `tail_elem` vertically
-            self.tail_elem.down = elem
-            elem.up = self.tail_elem
-
-            # Move the `self.tail_elem` down and make sure it links circularly
-            self.tail_elem = elem
-            self.tail_elem.down = self.head_elem
-            self.head_elem.up = self.tail_elem
-
+            self.head_elem.up = elem            
+            elem.down = self.head_elem
+            elem.up = old_tail
+            old_tail.down = elem
+            
         # Set ourselves as the column of the `elem`
         elem.set_column(self)
 
 class RowHeader():
     def __init__(self):
         self.head_elem = None
-        self.tail_elem = None
 
-    def add_elem2d(self, elem: Elem2D):
-        # If this is the first `elem`, mark it also as both the `head_elem` and `tail_elem`
-        if self.head_elem is None:
+    def relink(self, elem: Elem2D):
+        """Re-links the `elem` to this row."""
+        # If the `elem.right` is the current head or there is no head element,
+        # then we were the head before our removal
+        if elem.right is self.head_elem or not self.head_elem:
             self.head_elem = elem
 
-            assert self.tail_elem is None
-            self.tail_elem = elem
+        # Re-add the `elem` to the 2D list structure vertically
+        elem.right.left = elem
+        elem.left.right = elem
+
+    def unlink(self, elem):
+        # Check to see if we should move the head element of `self`
+        if self.head_elem is elem:
+            # If we are the last element of this circular list
+            if elem.right is elem:
+                self.head_elem = None
+            else:
+                self.head_elem = elem.right
+
+        # Remove ourselves from the 2D list structure horizontally
+        elem.left.right = elem.right
+        elem.right.left = elem.left
+        
+    def init_elem2d(self, elem: Elem2D):
+        """Adds an `elem` to the end of the row."""
+        # If this is the first `elem`, just mark it as the `head_elem`
+        if self.head_elem is None:
+            self.head_elem = elem
         else:
-            assert self.tail_elem is not None
+            # Link `elem` to `head_elem.left` which is the tail of the list
+            old_tail = self.head_elem.left
             
-            # Link the `elem` to the `tail_elem` horizontally
-            self.tail_elem.right = elem
-            elem.left = self.tail_elem            
+            self.head_elem.left = elem            
+            elem.right = self.head_elem
+            elem.left = old_tail
+            old_tail.right = elem
 
         # Set ourselves as the row of the `elem`
         elem.set_row(self)
@@ -110,40 +155,17 @@ class Elem2D:
 
     def unlink(self):
         assert self.column
+        assert self.row
         
-        # Check to see if we should move the head element of `self.column`
-        if self.column.head_elem is self:
-            # If we are the last element of this circular list
-            if self.down is self:
-                self.column.head_elem = None
-            else:
-                self.column.head_elem = self.down
-
-        # Decrement the column element counter
-        self.column.n_elems -= 1
-
-        # Remove ourselves from the 2D list structure
-        self.up.down = self.down
-        self.down.up = self.up
-
-        self.left.right = self.right
-        self.right.left = self.left
+        self.column.unlink(self)
+        self.row.unlink(self)
 
     def relink(self):
         assert self.column
+        assert self.row
         
-        if self.column.head_elem is None:
-            self.column.head_elem = self
-
-        # Increment the column element counter
-        self.column.n_elems += 1
-
-        # Re-add ourselves to the 2D list structure
-        self.up.down = self
-        self.down.up = self
-
-        self.left.right = self
-        self.right.left = self
+        self.column.relink(self)
+        self.row.relink(self)
 
 class Present:
     def __init__(self, present_id: int, data: list[list[int]], *, rotation: int = 0):
@@ -216,20 +238,17 @@ class PackingSolutionSpace:
         # Form all columns in an enforced sorted order
         self.columns = SortedSet(dependencies + constraints, key=lambda c: c.id)
 
-        # There a 4 * len(self.presents) rows (one for each orientation)
-        self.rows = [RowHeader() for _ in range(4 * len(self.presents))]
-
         # For each present orientation, set its rows
         for pi, present in enumerate(self.presents):
-            for opi, oriented_present in enumerate(present.orientations_iter()):
-                # Get the `row` for this `oriented_present`
-                row = self.rows[4 * pi + opi]
-                
+            for oriented_present in present.orientations_iter():                
                 # The top left corner of the present space is meant to determine its location
                 # Since the presents are always 3x3, there is a 2 unit space margin along the
                 # right and bottom edge of the tree space that the shape can never occupy
                 for i in range(self.tree.width - 2):
                     for j in range(self.tree.height - 2):
+                        # Each distinct `oriented_present` and start position get a `row`
+                        row = RowHeader()
+                        
                         # Iterate the 3x3 of each present
                         for col_diff in range(3):
                             for row_diff in range(3):
@@ -241,28 +260,28 @@ class PackingSolutionSpace:
                                     ]
                                     elem = Elem2D(
                                         payload={
+                                            "pi": pi,
                                             "present_id": present.id,
-                                            "rotation": oriented_present.rotation
+                                            "rotation": oriented_present.rotation,
                                         }
                                     )
-                                    cur_col.add_elem2d(elem)
-                                    row.add_elem2d(elem)
+                                    cur_col.init_elem2d(elem)
+                                    row.init_elem2d(elem)
 
-                # Importantly mark ourselves in the constraint corresponding to our present ID
-                constr_col = constraints[pi]
-                elem = Elem2D(
-                    payload={
-                        "present_id": present.id,
-                        "rotation": oriented_present.rotation
-                    }
-                )
-                constr_col.add_elem2d(elem)
-                row.add_elem2d(elem)
+                        # Importantly mark ourselves in the constraint corresponding
+                        # to our present ID
+                        constr_col = constraints[pi]
+                        elem = Elem2D(
+                            payload={
+                                "present_id": present.id,
+                                "rotation": oriented_present.rotation,
+                                "i": i,
+                                "j": j,                                
+                            }
+                        )
+                        constr_col.init_elem2d(elem)
+                        row.init_elem2d(elem)
 
-        # Every constraint column corresponds to a box.
-        # Assert that all 4 rotations are encapsulated
-        assert all(c.n_elems == 4 for c in constraints)
-                
     def add_solution_step(self, elem: Elem2D):
         self.solution_steps.append(elem)
 
@@ -326,46 +345,50 @@ class PackingSolutionSpace:
         return not self.constraints
             
     def solve(self) -> bool:
-        # Seed the stack with the first column to try
-        candidate_column_stack = [min(self.constraints, key=lambda c: c.n_elems)]
-        tried_elems = set()
+        # Seed the stack with the first column to try and the index of the `Elem2D`
+        # in this column to attempt next, initially the 0th
+        candidate_column_stack = [(min(self.constraints, key=lambda c: c.n_elems), 0)]
         while candidate_column_stack:
-            candidate_column = candidate_column_stack[-1]
-
+            candidate_column, try_idx = candidate_column_stack[-1]
+            
             # An invalid `candidate_column` would never be put on the stack
             # since it is wrapped by an `is_valid` check
             assert candidate_column.head_elem
 
-            local_tried_elems = set()
-            for candidate_elem in candidate_column.head_elem.vertical_iter():
-                local_tried_elems.add(candidate_elem)
-
+            for idx, candidate_elem in enumerate(candidate_column.head_elem.vertical_iter()):
                 # Skip this `candidate_elem` if we tried it already in a previous search attempt
-                if candidate_elem in tried_elems:
+                if idx < try_idx:
                     continue
 
-                tried_elems.add(candidate_elem)
+                if idx == 15:
+                    breakpoint()
+                
+                # Update the latest `try_idx` to `idx + 1` for any future iterations since
+                # we are trying `idx` right now
+                candidate_column_stack[-1] = (candidate_column, idx + 1)
 
                 self.add_solution_step(candidate_elem)
 
                 # A solution was found, return it!
                 if self.is_solved:
-                    breakpoint()
                     return True
 
                 # Try the next column if this is a valid step
                 if self.is_valid:
                     candidate_column_stack.append(
-                        min(self.columns, key=lambda c: c.n_elems)
+                        (min(self.constraints, key=lambda c: c.n_elems), 0)
                     )
                     break
 
-                # If this brings the solution space to an invalid state, undo this step
-                self.pop_solution_step()
+                # If this brings the solution space to an invalid state, undo this step,
+                # unless this is the last iteration. Then the pooping below will undo this step
+                if idx + 1 < candidate_column.n_elems:
+                    self.pop_solution_step()
+                else:
+                    breakpoint()
             else:
                 # All elements of the `candidate_column` were invalid
                 # since the `break` was never hit, backtrack one level up
-                tried_elems -= local_tried_elems
                 candidate_column_stack.pop()
                 self.pop_solution_step()
 
