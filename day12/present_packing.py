@@ -350,7 +350,7 @@ class PackingSolutionSpace:
         candidate_column_stack = [(min(self.constraints, key=lambda c: c.n_elems), 0)]
         while candidate_column_stack:
             candidate_column, try_idx = candidate_column_stack[-1]
-            
+
             # An invalid `candidate_column` would never be put on the stack
             # since it is wrapped by an `is_valid` check
             assert candidate_column.head_elem
@@ -359,12 +359,9 @@ class PackingSolutionSpace:
                 # Skip this `candidate_elem` if we tried it already in a previous search attempt
                 if idx < try_idx:
                     continue
-
-                if idx == 15:
-                    breakpoint()
                 
-                # Update the latest `try_idx` to `idx + 1` for any future iterations since
-                # we are trying `idx` right now
+                # Update the latest `try_idx` to `idx + 1` for any future
+                # iterations since we are trying `idx` right now
                 candidate_column_stack[-1] = (candidate_column, idx + 1)
 
                 self.add_solution_step(candidate_elem)
@@ -380,17 +377,21 @@ class PackingSolutionSpace:
                     )
                     break
 
-                # If this brings the solution space to an invalid state, undo this step,
-                # unless this is the last iteration. Then the pooping below will undo this step
-                if idx + 1 < candidate_column.n_elems:
-                    self.pop_solution_step()
-                else:
-                    breakpoint()
+                # Solution is not valid, pop the solution we just added
+                self.pop_solution_step()
             else:
                 # All elements of the `candidate_column` were invalid
                 # since the `break` was never hit, backtrack one level up
                 candidate_column_stack.pop()
-                self.pop_solution_step()
+
+                # if there are steps to back track to, pop its latest solution, so that
+                # it continue where it last stopped. If there are no backtracking steps,
+                # then this problem has no solution and there is nothing to pop
+                if self.backtracking_stack:
+                    self.pop_solution_step()
+                else:
+                    # Sanity check that there are no more candidate columns
+                    assert not candidate_column_stack
 
         # No solution found after exhausting the `candidate_column_stack`
         return False
