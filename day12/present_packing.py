@@ -3,6 +3,8 @@ from typing import Iterator, Literal
 
 import re
 from pathlib import Path
+from collections import deque
+from itertools import repeat
 
 import bitarray as ba
 
@@ -15,34 +17,97 @@ class FrozenBitMap2D:
         width: int,
         height: int,
         *,
-        data: ba.frozenbitarry
+        data: ba.frozenbitarray | None = None
     ):
         self.w = width
         self.h = height
 
-        # Sanity check
-        assert len(data) == self.w * self.h
-        self.data = data
+        if data:
+            # Sanity check
+            assert len(data) == self.w * self.h
+            self.data = data
+        else:
+            self.data = ba.frozenbitarray(self.w * self.h)
 
         self.used_space = self.data.count()
         self._or_mask = None
 
     @classmethod
     def fromBitMap2D(cls, o: BitMap2D) -> FrozenBitMap2D:
-        return cls(o.w, o.h, data=ba.frozenbitarry(o.data))
+        return cls(o.w, o.h, data=ba.frozenbitarray(o.data))
 
     def toBitMap2D(self) -> BitMap2D:
         return BitMap2D(self.w, self.h, data=ba.bitarray(self.data))
         
     def set_or_mask(self, full_width: int):
-        or_mask = ba.zeros(full_width * self.h)
+        # The first `h - 1` rows get the `full_width`. The last row is just our width
+        or_mask = ba.bitarray(full_width * (self.h - 1) + self.w)
 
         for i in range(self.h):
             src_offset = self.w * i
             dest_offset = full_width * i
             or_mask[dest_offset : dest_offset + self.w] |= self.data[src_offset : src_offset + self.w]
 
-        self._or_mask = ba.frozenbitarry(or_mask)        
+        self._or_mask = ba.frozenbitarray(or_mask)
+
+    def nonconflicting_or_at(
+        self,
+        other: FrozenBitMap2D,
+        xy: tuple[int, int],
+    ) -> FrozenBitMap2D | None:
+        """Applies the `other` in an XOR with the top left corner at (x, y).
+
+        If there is a conflict (self had a 1 and other also has a 1 in the same place),
+        then returns `None`. Otherwise returns the resulting OR'd `FrozenBitMap2D`."""
+        x, y = xy
+        
+        # Sanity check that we are in bounds and have an `_or_mask`
+        assert not (x < 0 or y < 0 or x > self.w or y > self.h)
+        assert other._or_mask
+
+        # If the `other` extends beyond the bounds, call this conflicting
+        if x + other.w > self.w or y + other.h > self.h:
+            return None
+        
+        offset = (y * self.w) + x
+        before_count = self.data[offset : offset + len(other._or_mask)].count()
+        result = self.data[offset : offset + len(other._or_mask)] | other._or_mask
+        after_count = result.count()
+
+        # If the `other._or_mask` did not add `other.used_space` bits exactly,
+        # then there was a conflict
+        if before_count + other.used_space != after_count:
+            return None
+
+        mutable_data = ba.bitarray(self.data)
+        mutable_data[offset : offset + len(other._or_mask)] = result
+        return FrozenBitMap2D(self.w, self.h, data=ba.frozenbitarray(mutable_data))
+        
+    def pprint(self, on="#", off=".") -> str:
+        rows = []
+        for y in range(self.h):
+            start = y * self.w
+            end = start + self.w
+            row = self.data[start:end]
+            rows.append("".join(on if bit else off for bit in row))
+        return "\n".join(rows)
+
+    @property
+    def inactive_indices(self) -> Iterator[tuple[int, int]]:
+        """Yields all indices that are 0s."""
+        indices_1d = self.data.search(ba.bitarray([0]))
+
+        for i_1d in indices_1d:
+            yield (i_1d % self.w, i_1d // self.w)
+    
+    def __eq__(self, other: FrozenBitMap2D, /) -> bool:
+        return self.data == other.data
+
+    def __hash__(self) -> int:
+        return hash(self.data)
+    
+    def __str__(self) -> str:
+        return self.pprint()    
 
 class BitMap2D:
     def __init__(
@@ -60,34 +125,21 @@ class BitMap2D:
             assert len(data) == self.w * self.h
             self.data = data
         else:
-            self.data = ba.zeros(self.w * self.h)
+            self.data = ba.bitarray(self.w * self.h)
 
-    def nonconflicting_or_at(self, other: FrozenBitMap2D, x: int, y: int) -> bool:
-        """Applies the `other` in an XOR with the top left corner at (x, y).
-
-        If there is a conflict (self had a 1 and other also has a 1 in the same place),
-        then returns `False` with no side-effects. Otherwise, apply in-place."""
-        # Sanity check that we are in bounds and have an `_or_mask`
-        assert not (x < 0 or y < 0 or x + other.w > self.w or y + other.h > self.h)
-        assert other._or_mask
-
-        offset = (y * self.w) + x
-        before_count = self.data[offset : offset + len(other._or_mask)].count()
-        result = self.data[offset : offset + len(other._or_mask)] | other._or_mask
-        after_count = result.count()
-
-        # If the `other._or_mask` did not add `other.used_space` bits exactly,
-        # then there was a conflict
-        if before_count + other.used_space != after_count:
-            return False
-
-        self.data[offset : offset + len(other._or_mask)] = result
-        return True
-        
     def copy(self) -> BitMap2D:
         # Force `self.data` to a mutable bitarray on `copy`
         data_cp = ba.bitarray(self.data)
         return BitMap2D(self.w, self.h, data=data_cp)
+
+    def pprint(self, on="#", off=".") -> str:
+        rows = []
+        for y in range(self.h):
+            start = y * self.w
+            end = start + self.w
+            row = self.data[start:end]
+            rows.append("".join(on if bit else off for bit in row))
+        return "\n".join(rows)
         
     def __getitem__(self, xy: tuple[int, int]):
         x, y = xy
@@ -96,6 +148,10 @@ class BitMap2D:
     def __setitem__(self, xy: tuple[int, int], v: Literal[0, 1]):
         x, y = xy
         self.data[y * self.w + x] = v
+
+    def __str__(self) -> str:
+        return self.pprint()
+            
 
 class Present:
     def __init__(self, present_id: int, area: FrozenBitMap2D, *, rotation: int = 0):
@@ -120,40 +176,51 @@ class Present:
             col = i % 3
 
             if c == '#':
-                data[row, col] = 1
+                data[col, row] = 1
 
         return cls(present_id, FrozenBitMap2D.fromBitMap2D(data))
-                
+
+    def set_or_mask(self, full_width: int):
+        # Set the `or_mask` for all rotations
+        for oriented_present in self.orientations_iter:
+            oriented_present.area.set_or_mask(full_width)
+    
     def _compute_rotations(self) -> list[Present] | None:
         # Only applies to the original un-rotated shape
-        if not self.rotation:
+        if self.rotation:
             return None
 
         ret = []
+        rotated_areas = set()
         
         # First add ourselves
         ret.append(self)
+        rotated_areas.add(self.area)
         
         # Rotate and yield 3 times
-        rotated_data = self.area.toBitMap2D()
+        rotated_area = self.area.toBitMap2D()
         for rot in range(1, 4):
-            new_rotated_data = BitMap2D(3, 3)
+            new_rotated_area = BitMap2D(3, 3)
 
             # Procedure to rotated a 3x3 matrix
             for i in range(3):
                 for j in range(3):
-                    new_rotated_data[i, j] = rotated_data[(2 - j), i]
+                    new_rotated_area[i, j] = rotated_area[(2 - j), i]
 
             # Add the newly appended present
             assert rot
-            ret.append(
-                Present(self.id, FrozenBitMap2D.fromBitMap2D(new_rotated_data), rotation=rot)
-            )
+            new_area = FrozenBitMap2D.fromBitMap2D(new_rotated_area)
 
-            rotated_data = new_rotated_data.copy()
+            # No point in testing oriented presents that are rotationally symmetrical
+            if new_area not in rotated_areas:
+                ret.append(Present(self.id, new_area, rotation=rot))
+                rotated_areas.add(new_area)
+
+            rotated_area = new_rotated_area.copy()
         
         return ret
 
+    @property
     def orientations_iter(self) -> Iterator[Present]:
         assert self._rotations is not None
         yield from self._rotations
@@ -168,18 +235,60 @@ class ChristmasTree:
     ):
         self.width = width
         self.height = height
-        self.area = BitMap2D(self.width, self.height)
 
         # Convert the `present_counts` to a dictionary of present_id
         self.present_counts = dict(enumerate(present_counts))
 
+        # Set the OR mask for the `presents`
+        for p in presents:
+            p.set_or_mask(self.width)
+        
         self.presents = [presents[p_id] for p_id, count in self.present_counts.items()
                          for _ in range(count)]
 
-    def apply_present(self, present: Present) -> bool:
-        # First check if `present` conflicts with any used space
-        pass
+    @staticmethod
+    def apply_present(
+        area: FrozenBitMap2D,
+        present: Present,
+        *,
+        seen: set[FrozenBitMap2D],
+    ) -> list[FrozenBitMap2D]:
+        ret = []
         
+        for xy in area.inactive_indices:
+            for oriented_present in present.orientations_iter:
+                new_area = area.nonconflicting_or_at(oriented_present.area, xy)
+
+                # If there is a valid `new_area` that we have not seen yet
+                if new_area is not None and new_area not in seen:
+                    ret.append(new_area)
+                    seen.add(new_area)
+                    
+        return ret
+        
+    def is_satisfiable(self) -> bool:
+        # Start the work with all presents and an empty area
+        work = deque([(self.presents, FrozenBitMap2D(self.width, self.height))])
+        seen_areas = set()
+        
+        while work:
+            print(len(work), len(seen_areas))
+            presents, area = work.popleft()
+
+            assert presents
+
+            new_areas = self.apply_present(area, presents[0], seen=seen_areas)
+
+            # If this was the last present and there were valid `new_areas`,
+            # then this tree IS satisfiable
+            if len(presents) == 1 and new_areas:
+                return True
+
+            # Otherwise add the `new_areas` as new jobs at the end of the `work` deque
+            work.extendleft(zip(repeat(presents[1:]), new_areas, strict=False))
+
+        # We exhausted the `work` deque without satisfying the tree
+        return False
 
 
 def part1():
@@ -205,12 +314,11 @@ def part1():
         height = int(tree_match.group(2))
         present_counts = [int(c) for c in tree_match.group(3).split()]
 
-        trees.append(ChristmasTree(width, height, present_counts))
+        trees.append(ChristmasTree(width, height, present_counts, presents))
 
     n_satisfied = 0
-    for tree in trees:
-        packing_solution_space = PackingSolutionSpace(tree, presents)
-        n_satisfied += int(packing_solution_space.solve())
+    for tree in trees: 
+        n_satisfied += int(tree.is_satisfiable())
 
     print(f"Part 1 Christmas trees satisfied: {n_satisfied}")
 
