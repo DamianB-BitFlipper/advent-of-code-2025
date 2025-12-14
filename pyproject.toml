@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.3.5",
     "pulp>=3.3.0",
     "fire>=0.7.1",
+    "bitarray>=3.8.0",
 ]
 
 [dependency-groups]
