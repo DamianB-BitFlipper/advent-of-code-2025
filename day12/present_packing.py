@@ -99,12 +99,38 @@ class FrozenBitMap2D:
 
         for i_1d in indices_1d:
             yield (i_1d % self.w, i_1d // self.w)
-    
+
     def __eq__(self, other: FrozenBitMap2D, /) -> bool:
-        return self.data == other.data
+        return hash(self) == hash(other)
 
     def __hash__(self) -> int:
-        return hash(self.data)
+        """Hash this `FrozenBitMap2D`.
+
+        The hash function is defined such that `FrozenBitMap2D` that are symmetrical
+        horizontally, vertically or 180 degree flip will yield the same hash value.
+
+        This is done by checking for every row `i` (^R means reversed):
+        row[i] = row[n_rows - i -1]
+        row[i] = row[i]^R
+        row[i] = row[n_rows - i -1]^R
+
+        with the optimization that we only need to check up to `i` of half the number of rows
+        since the above equalities are horizontally symmetrical
+        """
+        running_hash = 0
+
+        for hi_left in range((self.h + 1) // 2):
+            hi_right = (self.h - 1) - hi_left
+            
+            data_left = self.data[hi_left * self.w : (hi_left + 1) * self.w]
+            data_right = self.data[hi_right * self.w : (hi_right + 1) * self.w]
+
+            running_hash += hash(data_left)
+            running_hash += hash(data_left[::-1])
+            running_hash += hash(data_right)
+            running_hash += hash(data_right[::-1])
+
+        return running_hash
     
     def __str__(self) -> str:
         return self.pprint()    
@@ -238,11 +264,6 @@ class ChristmasTree:
 
         # Convert the `present_counts` to a dictionary of present_id
         self.present_counts = dict(enumerate(present_counts))
-
-        # Set the OR mask for the `presents`
-        for p in presents:
-            p.set_or_mask(self.width)
-        
         self.presents = [presents[p_id] for p_id, count in self.present_counts.items()
                          for _ in range(count)]
 
@@ -267,12 +288,15 @@ class ChristmasTree:
         return ret
         
     def is_satisfiable(self) -> bool:
+        # Before working, be sure to set the OR mask for the `self.presents`
+        for p in self.presents:
+            p.set_or_mask(self.width)
+        
         # Start the work with all presents and an empty area
         work = deque([(self.presents, FrozenBitMap2D(self.width, self.height))])
         seen_areas = set()
         
         while work:
-            print(len(work), len(seen_areas))
             presents, area = work.popleft()
 
             assert presents
