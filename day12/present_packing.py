@@ -8,8 +8,8 @@ from itertools import repeat
 
 import bitarray as ba
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
 
 class FrozenBitMap2D:
     def __init__(
@@ -217,11 +217,14 @@ class Present:
             return None
 
         ret = []
-        rotated_areas = set()
+        rotated_datas = set()
         
-        # First add ourselves
+        # First add ourselves. Importantly we want to uniquely track `self.area.data`, not
+        # the `self.area` since the `hash` function of `FrozenBitMap2D` excludes rotational
+        # symmetries. In this case we want rotational symmetries and just want to exclude
+        # exact matches
         ret.append(self)
-        rotated_areas.add(self.area)
+        rotated_datas.add(self.area.data)
         
         # Rotate and yield 3 times
         rotated_area = self.area.toBitMap2D()
@@ -238,9 +241,9 @@ class Present:
             new_area = FrozenBitMap2D.fromBitMap2D(new_rotated_area)
 
             # No point in testing oriented presents that are rotationally symmetrical
-            if new_area not in rotated_areas:
+            if new_area.data not in rotated_datas:
                 ret.append(Present(self.id, new_area, rotation=rot))
-                rotated_areas.add(new_area)
+                rotated_datas.add(new_area.data)
 
             rotated_area = new_rotated_area.copy()
         
@@ -341,8 +344,11 @@ def part1():
         trees.append(ChristmasTree(width, height, present_counts, presents))
 
     n_satisfied = 0
-    for tree in trees: 
-        n_satisfied += int(tree.is_satisfiable())
+    for ti, tree in enumerate(trees):
+        print(f"Starting tree: {ti}")
+        satisfied = tree.is_satisfiable()
+        n_satisfied += int(satisfied)
+        print(f"Finished tree: {ti}, {satisfied=}")
 
     print(f"Part 1 Christmas trees satisfied: {n_satisfied}")
 
