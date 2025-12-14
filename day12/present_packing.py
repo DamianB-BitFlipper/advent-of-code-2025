@@ -5,11 +5,18 @@ import re
 from pathlib import Path
 from collections import deque
 from itertools import repeat
+from enum import IntEnum, auto
 
 import bitarray as ba
 
-# IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./demo_input.txt")
+# IN_FILE = Path("./full_input.txt")
+
+class Rotation(IntEnum):
+    ZERO = auto()
+    NINETY = auto()
+    ONEEIGHTY = auto()
+    TWOSEVENTY = auto()
 
 class FrozenBitMap2D:
     def __init__(
@@ -30,7 +37,6 @@ class FrozenBitMap2D:
             self.data = ba.frozenbitarray(self.w * self.h)
 
         self.used_space = self.data.count()
-        self._or_mask = None
 
     @classmethod
     def fromBitMap2D(cls, o: BitMap2D) -> FrozenBitMap2D:
@@ -39,49 +45,152 @@ class FrozenBitMap2D:
     def toBitMap2D(self) -> BitMap2D:
         return BitMap2D(self.w, self.h, data=ba.bitarray(self.data))
         
-    def set_or_mask(self, full_width: int):
-        # The first `h - 1` rows get the `full_width`. The last row is just our width
-        or_mask = ba.bitarray(full_width * (self.h - 1) + self.w)
+    def is_conflicting(self, x: int, y: int) -> bool:
+        # Outside of bounds never conflicts
+        if x < 0 or y < 0 or x >= self.w or y >= self.h:
+            return False
 
-        for i in range(self.h):
-            src_offset = self.w * i
-            dest_offset = full_width * i
-            or_mask[dest_offset : dest_offset + self.w] |= self.data[src_offset : src_offset + self.w]
-
-        self._or_mask = ba.frozenbitarray(or_mask)
-
+        offset = (y * self.w) + x
+        return bool(self.data[offset])
+        
     def nonconflicting_or_at(
         self,
         other: FrozenBitMap2D,
+        rotation: Rotation,
         xy: tuple[int, int],
     ) -> FrozenBitMap2D | None:
-        """Applies the `other` in an XOR with the top left corner at (x, y).
+        """Applies the `other` in an XOR with the pivot at (x, y) and the `rotation`.
 
         If there is a conflict (self had a 1 and other also has a 1 in the same place),
         then returns `None`. Otherwise returns the resulting OR'd `FrozenBitMap2D`."""
         x, y = xy
-        
-        # Sanity check that we are in bounds and have an `_or_mask`
-        assert not (x < 0 or y < 0 or x > self.w or y > self.h)
-        assert other._or_mask
 
-        # If the `other` extends beyond the bounds, call this conflicting
-        if x + other.w > self.w or y + other.h > self.h:
+        # Sanity check that the `other` is a shape of size 3x3
+        assert other.w == 3 and other.h == 3
+
+        # Record the possible min/max coordinates of the resulting working area. Since
+        # the `xy` can be out of bounds, factor that in as well.
+        min_x = min(x, 0)
+        min_y = min(y, 0)
+        max_x = max(x, self.w)
+        max_y = max(y, self.h)
+
+        # Only check for collisions for points within `self`'s working area. Anywhere
+        # the `other` extends beyond the bounds does not conflict always
+        match rotation:
+            case Rotation.ZERO:  # Pivot is top-left
+                conflicting = any(
+                    self.is_conflicting(i, j)
+                    for i, j, oi, oj in [
+                        (x, y, 0, 0), (x + 1, y, 1, 0), (x + 2, y, 2, 0),
+                        (x, y + 1, 0, 1), (x + 1, y + 1, 1, 1), (x + 2, y + 1, 2, 1),
+                        (x, y + 2, 0, 2), (x + 1, y + 2, 1, 2), (x + 2, y + 2, 2, 2),
+                    ]
+                    if other.data[oi + oj * 3]
+                )
+                max_x = max(max_x, x + 2)
+                max_y = max(max_y, y + 2)
+            case Rotation.NINETY:  # Pivot is top-right
+                conflicting = any(
+                    self.is_conflicting(i, j)
+                    for i, j, oi, oj in [
+                        (x, y, 2, 0), (x - 1, y, 1, 0), (x - 2, y, 0, 0),
+                        (x, y + 1, 2, 1), (x - 1, y + 1, 1, 1), (x - 2, y + 1, 0, 1),
+                        (x, y + 2, 2, 2), (x - 1, y + 2, 1, 2), (x - 2, y + 2, 0, 2),
+                    ]
+                    if other.data[oi + oj * 3]
+                )
+                min_x = min(min_x, x - 2)
+                max_y = max(max_y, y + 2)
+            case Rotation.ONEEIGHTY:  # Pivot is bottom-right
+                conflicting = any(
+                    self.is_conflicting(i, j)
+                    for i, j, oi, oj in [
+                        (x, y, 2, 2), (x - 1, y, 1, 2), (x - 2, y, 0, 2),
+                        (x, y - 1, 2, 1), (x - 1, y - 1, 1, 1), (x - 2, y - 1, 0, 1),
+                        (x, y - 2, 2, 0), (x - 1, y - 2, 1, 0), (x - 2, y - 2, 0, 0),
+                    ]
+                    if other.data[oi + oj * 3]
+                )
+                min_x = min(min_x, x - 2)
+                min_y = min(min_y, y - 2)
+            case Rotation.TWOSEVENTY:  # Pivot is bottom-left
+                conflicting = any(
+                    self.is_conflicting(i, j)
+                    for i, j, oi, oj in [
+                        (x, y, 0, 2), (x + 1, y, 1, 2), (x + 2, y, 2, 2),
+                        (x, y - 1, 0, 1), (x + 1, y - 1, 1, 1), (x + 2, y - 1, 2, 1),
+                        (x, y - 2, 0, 0), (x + 1, y - 2, 1, 0), (x + 2, y - 2, 2, 0),
+                    ]
+                    if other.data[oi + oj * 3]
+                )
+                max_x = max(max_x, x + 2)
+                min_y = min(min_y, y - 2)
+            case _:
+                # Should never happen
+                raise AssertionError()
+
+        # There is a conflict for this configuration, so return `None`
+        if conflicting:
             return None
+
+        new_width = max_x - min_x + 1
+        new_height = max_y - min_y + 1
+        new_area = ba.bitarray(new_width * new_height)
+
+        # Compute the offsets for `self.data` within `new_area` since `min_x` and `min_y`
+        # may be negative and extend beyond the bouds. We still want `self.data` to
+        # remain in place starting from "its (0, 0)".
+        offset_x = 0 - min_x
+        offset_y = 0 - min_y
+
+        def old_to_new_offset(old_x: int, old_y: int) -> int:
+            """Compute the offset in to the `new_area` given `old_x` and `old_y` coordinates."""
+            return (old_y + offset_y) * self.w + offset_x + old_x 
         
-        offset = (y * self.w) + x
-        before_count = self.data[offset : offset + len(other._or_mask)].count()
-        result = self.data[offset : offset + len(other._or_mask)] | other._or_mask
-        after_count = result.count()
+        # Copy our `self.data` in to the `new_area` row by row
+        for j in range(self.h):
+            new_area[old_to_new_offset(0, j) : old_to_new_offset(0, j + 1)] = (
+                self.data[j * self.w : (j + 1) * self.w]
+            )
+        
+        # Now add in the `other` shape
+        match rotation:
+            case Rotation.ZERO:  # Pivot is top-left
+                for i, j, oi, oj in [
+                        (x, y, 0, 0), (x + 1, y, 1, 0), (x + 2, y, 2, 0),
+                        (x, y + 1, 0, 1), (x + 1, y + 1, 1, 1), (x + 2, y + 1, 2, 1),
+                        (x, y + 2, 0, 2), (x + 1, y + 2, 1, 2), (x + 2, y + 2, 2, 2),
+                ]:
+                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
 
-        # If the `other._or_mask` did not add `other.used_space` bits exactly,
-        # then there was a conflict
-        if before_count + other.used_space != after_count:
-            return None
+            case Rotation.NINETY:  # Pivot is top-right
+                for i, j, oi, oj in [
+                        (x, y, 2, 0), (x - 1, y, 1, 0), (x - 2, y, 0, 0),
+                        (x, y + 1, 2, 1), (x - 1, y + 1, 1, 1), (x - 2, y + 1, 0, 1),
+                        (x, y + 2, 2, 2), (x - 1, y + 2, 1, 2), (x - 2, y + 2, 0, 2),
+                ]:
+                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
 
-        mutable_data = ba.bitarray(self.data)
-        mutable_data[offset : offset + len(other._or_mask)] = result
-        return FrozenBitMap2D(self.w, self.h, data=ba.frozenbitarray(mutable_data))
+            case Rotation.ONEEIGHTY:  # Pivot is bottom-right
+                for i, j, oi, oj in [
+                        (x, y, 2, 2), (x - 1, y, 1, 2), (x - 2, y, 0, 2),
+                        (x, y - 1, 2, 1), (x - 1, y - 1, 1, 1), (x - 2, y - 1, 0, 1),
+                        (x, y - 2, 2, 0), (x - 1, y - 2, 1, 0), (x - 2, y - 2, 0, 0),
+                ]:
+                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+            case Rotation.TWOSEVENTY:  # Pivot is bottom-left
+                for i, j, oi, oj in [
+                        (x, y, 0, 2), (x + 1, y, 1, 2), (x + 2, y, 2, 2),
+                        (x, y - 1, 0, 1), (x + 1, y - 1, 1, 1), (x + 2, y - 1, 2, 1),
+                        (x, y - 2, 0, 0), (x + 1, y - 2, 1, 0), (x + 2, y - 2, 2, 0),
+                ]:
+                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+            case _:
+                # Should never happen
+                raise AssertionError()        
+            
+        return FrozenBitMap2D(new_width, new_height, data=ba.frozenbitarray(new_area))
         
     def pprint(self, on="#", off=".") -> str:
         rows = []
@@ -94,9 +203,21 @@ class FrozenBitMap2D:
 
     @property
     def inactive_indices(self) -> Iterator[tuple[int, int]]:
-        """Yields all indices that are 0s."""
+        """Yields all indices that are 0s as well as a border of 1."""
         indices_1d = self.data.search(ba.bitarray([0]))
 
+        # Top border
+        yield from [(x, -1) for x in range(-1, self.w + 1)]
+
+        # Bottom border
+        yield from [(x, self.h) for x in range(-1, self.w + 1)]
+
+        # Left edge (without double counting on the top/bottom borders)
+        yield from [(-1, y) for y in range(self.h)]
+
+        # Right edge (without double counting on the top/bottom borders)
+        yield from [(self.w, y) for y in range(self.h)]
+        
         for i_1d in indices_1d:
             yield (i_1d % self.w, i_1d // self.w)
 
@@ -180,7 +301,13 @@ class BitMap2D:
             
 
 class Present:
-    def __init__(self, present_id: int, area: FrozenBitMap2D, *, rotation: int = 0):
+    def __init__(
+        self,
+        present_id: int,
+        area: FrozenBitMap2D,
+        *,
+        rotation: Rotation = Rotation.ZERO,
+    ):
         self.id = present_id
         self.rotation = rotation
         
@@ -205,15 +332,10 @@ class Present:
                 data[col, row] = 1
 
         return cls(present_id, FrozenBitMap2D.fromBitMap2D(data))
-
-    def set_or_mask(self, full_width: int):
-        # Set the `or_mask` for all rotations
-        for oriented_present in self.orientations_iter:
-            oriented_present.area.set_or_mask(full_width)
     
     def _compute_rotations(self) -> list[Present] | None:
         # Only applies to the original un-rotated shape
-        if self.rotation:
+        if self.rotation != Rotation.ZERO:
             return None
 
         ret = []
@@ -228,7 +350,7 @@ class Present:
         
         # Rotate and yield 3 times
         rotated_area = self.area.toBitMap2D()
-        for rot in range(1, 4):
+        for rot in list(Rotation)[1:]:
             new_rotated_area = BitMap2D(3, 3)
 
             # Procedure to rotated a 3x3 matrix
@@ -237,7 +359,7 @@ class Present:
                     new_rotated_area[i, j] = rotated_area[(2 - j), i]
 
             # Add the newly appended present
-            assert rot
+            assert rot != Rotation.ZERO
             new_area = FrozenBitMap2D.fromBitMap2D(new_rotated_area)
 
             # No point in testing oriented presents that are rotationally symmetrical
@@ -270,18 +392,22 @@ class ChristmasTree:
         self.presents = [presents[p_id] for p_id, count in self.present_counts.items()
                          for _ in range(count)]
 
-    @staticmethod
     def apply_present(
-        area: FrozenBitMap2D,
+        self,
+        working_area: FrozenBitMap2D,
         present: Present,
         *,
         seen: set[FrozenBitMap2D],
     ) -> list[FrozenBitMap2D]:
         ret = []
         
-        for xy in area.inactive_indices:
+        for xy in working_area.inactive_indices:
             for oriented_present in present.orientations_iter:
-                new_area = area.nonconflicting_or_at(oriented_present.area, xy)
+                new_area = working_area.nonconflicting_or_at(
+                    oriented_present.area,
+                    oriented_present.rotation,
+                    xy,
+                )
 
                 # If there is a valid `new_area` that we have not seen yet
                 if new_area is not None and new_area not in seen:
@@ -290,21 +416,17 @@ class ChristmasTree:
                     
         return ret
         
-    def is_satisfiable(self) -> bool:
-        # Before working, be sure to set the OR mask for the `self.presents`
-        for p in self.presents:
-            p.set_or_mask(self.width)
-        
-        # Start the work with all presents and an empty area
-        work = deque([(self.presents, FrozenBitMap2D(self.width, self.height))])
+    def is_satisfiable(self) -> bool:        
+        # Start the work with all presents and a one-sized initial working space
+        work = deque([(self.presents, FrozenBitMap2D(1, 1))])
         seen_areas = set()
         
         while work:
-            presents, area = work.popleft()
+            presents, working_area = work.popleft()
 
             assert presents
 
-            new_areas = self.apply_present(area, presents[0], seen=seen_areas)
+            new_areas = self.apply_present(working_area, presents[0], seen=seen_areas)
 
             # If this was the last present and there were valid `new_areas`,
             # then this tree IS satisfiable
