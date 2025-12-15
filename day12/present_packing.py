@@ -58,6 +58,9 @@ class FrozenBitMap2D:
         other: FrozenBitMap2D,
         rotation: Rotation,
         xy: tuple[int, int],
+        *,
+        limit_w: int,
+        limit_h: int,
     ) -> FrozenBitMap2D | None:
         """Applies the `other` in an XOR with the pivot at (x, y) and the `rotation`.
 
@@ -72,8 +75,8 @@ class FrozenBitMap2D:
         # the `xy` can be out of bounds, factor that in as well.
         min_x = min(x, 0)
         min_y = min(y, 0)
-        max_x = max(x, self.w)
-        max_y = max(y, self.h)
+        max_x = max(x, self.w - 1)
+        max_y = max(y, self.h - 1)
 
         # Only check for collisions for points within `self`'s working area. Anywhere
         # the `other` extends beyond the bounds does not conflict always
@@ -136,6 +139,12 @@ class FrozenBitMap2D:
 
         new_width = max_x - min_x + 1
         new_height = max_y - min_y + 1
+
+        # If any of the new height and widths exceed the given limits, then this
+        # new area cannot fit under the tree, so exit early
+        if new_width > limit_w or new_height > limit_h:
+            return None
+        
         new_area = ba.bitarray(new_width * new_height)
 
         # Compute the offsets for `self.data` within `new_area` since `min_x` and `min_y`
@@ -146,11 +155,11 @@ class FrozenBitMap2D:
 
         def old_to_new_offset(old_x: int, old_y: int) -> int:
             """Compute the offset in to the `new_area` given `old_x` and `old_y` coordinates."""
-            return (old_y + offset_y) * self.w + offset_x + old_x 
+            return (old_y + offset_y) * new_width + offset_x + old_x 
         
         # Copy our `self.data` in to the `new_area` row by row
         for j in range(self.h):
-            new_area[old_to_new_offset(0, j) : old_to_new_offset(0, j + 1)] = (
+            new_area[old_to_new_offset(0, j) : old_to_new_offset(self.w, j)] = (
                 self.data[j * self.w : (j + 1) * self.w]
             )
         
@@ -162,7 +171,8 @@ class FrozenBitMap2D:
                         (x, y + 1, 0, 1), (x + 1, y + 1, 1, 1), (x + 2, y + 1, 2, 1),
                         (x, y + 2, 0, 2), (x + 1, y + 2, 1, 2), (x + 2, y + 2, 2, 2),
                 ]:
-                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+                    if other.data[oj * 3 + oi]:
+                        new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
 
             case Rotation.NINETY:  # Pivot is top-right
                 for i, j, oi, oj in [
@@ -170,7 +180,8 @@ class FrozenBitMap2D:
                         (x, y + 1, 2, 1), (x - 1, y + 1, 1, 1), (x - 2, y + 1, 0, 1),
                         (x, y + 2, 2, 2), (x - 1, y + 2, 1, 2), (x - 2, y + 2, 0, 2),
                 ]:
-                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+                    if other.data[oj * 3 + oi]:
+                        new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
 
             case Rotation.ONEEIGHTY:  # Pivot is bottom-right
                 for i, j, oi, oj in [
@@ -178,14 +189,16 @@ class FrozenBitMap2D:
                         (x, y - 1, 2, 1), (x - 1, y - 1, 1, 1), (x - 2, y - 1, 0, 1),
                         (x, y - 2, 2, 0), (x - 1, y - 2, 1, 0), (x - 2, y - 2, 0, 0),
                 ]:
-                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+                    if other.data[oj * 3 + oi]:
+                        new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
             case Rotation.TWOSEVENTY:  # Pivot is bottom-left
                 for i, j, oi, oj in [
                         (x, y, 0, 2), (x + 1, y, 1, 2), (x + 2, y, 2, 2),
                         (x, y - 1, 0, 1), (x + 1, y - 1, 1, 1), (x + 2, y - 1, 2, 1),
                         (x, y - 2, 0, 0), (x + 1, y - 2, 1, 0), (x + 2, y - 2, 2, 0),
                 ]:
-                    new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
+                    if other.data[oj * 3 + oi]:
+                        new_area[old_to_new_offset(i, j)] = other.data[oj * 3 + oi]
             case _:
                 # Should never happen
                 raise AssertionError()        
@@ -356,7 +369,7 @@ class Present:
             # Procedure to rotated a 3x3 matrix
             for i in range(3):
                 for j in range(3):
-                    new_rotated_area[i, j] = rotated_area[(2 - j), i]
+                    new_rotated_area[i, j] = rotated_area[j, (2 - i)]
 
             # Add the newly appended present
             assert rot != Rotation.ZERO
@@ -400,13 +413,15 @@ class ChristmasTree:
         seen: set[FrozenBitMap2D],
     ) -> list[FrozenBitMap2D]:
         ret = []
-        
+
         for xy in working_area.inactive_indices:
             for oriented_present in present.orientations_iter:
                 new_area = working_area.nonconflicting_or_at(
                     oriented_present.area,
                     oriented_present.rotation,
                     xy,
+                    limit_w=self.width,
+                    limit_h=self.height,
                 )
 
                 # If there is a valid `new_area` that we have not seen yet
@@ -416,9 +431,9 @@ class ChristmasTree:
                     
         return ret
         
-    def is_satisfiable(self) -> bool:        
-        # Start the work with all presents and a one-sized initial working space
-        work = deque([(self.presents, FrozenBitMap2D(1, 1))])
+    def is_satisfiable(self) -> bool:
+        # Start the work with all presents and a nil initial working space
+        work = deque([(self.presents, FrozenBitMap2D(0, 0))])
         seen_areas = set()
         
         while work:
