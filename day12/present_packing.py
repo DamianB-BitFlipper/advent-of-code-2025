@@ -231,11 +231,13 @@ class Present:
             return None
 
         ret = []
-        rotated_areas = set()
+        rotated_datas = set()
 
-        # First add ourselves
+        # First add ourselves. Record the bitarray data in the `rotated_datas` seen
+        # set since we do not want to apply the reflected
+        # symmetry hash function of the FrozenBitMap2D
         ret.append(self)
-        rotated_areas.add(self.area)
+        rotated_datas.add(self.area.data)
 
         # Rotate and yield 3 times
         rotated_area = self.area.toBitMap2D()
@@ -252,9 +254,9 @@ class Present:
             new_area = FrozenBitMap2D.fromBitMap2D(new_rotated_area)
 
             # No point in testing oriented presents that are rotationally symmetrical
-            if new_area not in rotated_areas:
+            if new_area.data not in rotated_datas:
                 ret.append(Present(self.id, new_area, rotation=rot))
-                rotated_areas.add(new_area)
+                rotated_datas.add(new_area.data)
 
             rotated_area = new_rotated_area.copy()
 
@@ -307,22 +309,18 @@ class ChristmasTree:
                     )
 
                     # If we have not seen this working area yet
-                    if new_working_area not in seen:
-                        ret.append(new_working_area)
-                        seen.add(new_working_area)
+                    #if new_working_area not in seen:
+                    ret.append(new_working_area)
+                    seen.add(new_working_area)
 
         return ret
 
-    def is_satisfiable(self) -> bool:
-        # Before working, be sure to set the OR mask for the `self.presents`
-        for p in self.presents:
-            p.set_or_mask(self.width)
-
+    def compute_solved_areas(self, presents: list[Present]) -> list[FrozenBitMap2D]:
         # Start the work with all presents and an empty working area
         work = deque(
             [
                 (
-                    self.presents,
+                    presents,
                     WorkingArea(
                         area=FrozenBitMap2D(self.width, self.height),
                         applied_presents=tuple(0 for _ in range(len(self.present_counts))),
@@ -332,28 +330,46 @@ class ChristmasTree:
         )
         seen_working_areas = set()
 
+        ret = []
+
         while work:
-            presents, working_area = work.popleft()
+            to_do_presents, working_area = work.popleft()
 
-            assert presents
-
+            # If there are no more presents to process, that means the `working_area`
+            # is a full and valid area, so save it
+            if not to_do_presents:
+                ret.append(working_area.area)
+                continue
+                
             new_working_areas = self.apply_present(
                 working_area,
-                presents[0],
+                to_do_presents[0],
                 seen=seen_working_areas,
             )
 
-            # If this was the last present and there were valid `new_areas`,
-            # then this tree IS satisfiable
-            if len(presents) == 1 and new_working_areas:
-                return True
-
             # Otherwise add the `new_areas` as new jobs at the end of the `work` deque
-            work.extendleft(zip(repeat(presents[1:]), new_working_areas, strict=False))
+            work.extendleft(zip(repeat(to_do_presents[1:]), new_working_areas, strict=False))
 
-        # We exhausted the `work` deque without satisfying the tree
+        return ret
+
+    def is_satisfiable(self) -> bool:
+        # Before working, be sure to set the OR mask for the `self.presents`
+        for p in self.presents:
+            p.set_or_mask(self.width)
+
+        present_mid = len(self.presents) // 2
+            
+        solved_half1 = self.compute_solved_areas(self.presents[present_mid:])
+        solved_half2 = self.compute_solved_areas(self.presents[:present_mid])
+
+        breakpoint()
+        
+        for candidate_h1 in solved_half1:
+            for candidate_h2 in solved_half2:
+                if not (candidate_h1.data & candidate_h2.data).any():
+                    return True
+
         return False
-
 
 def part1():
     file_contents = IN_FILE.read_text()
