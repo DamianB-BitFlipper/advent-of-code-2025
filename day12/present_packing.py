@@ -1,271 +1,65 @@
 from __future__ import annotations
 
 import re
-from enum import IntEnum, auto
-from collections import deque
+import uuid
+from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass
-from itertools import repeat
+from itertools import product
 from pathlib import Path
-from typing import Literal
 
-import bitarray as ba
+import pulp as pl
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
 
 PresentID = int
-
-class Rotation(IntEnum):
-    ZERO = auto()
-    NINETY = auto()
-    ONEEIGHTY = auto()
-    TWOSEVENTY = auto()
-
-@dataclass(frozen=True)
-class WorkingArea:
-    area: FrozenBitMap2D
-    applied_presents: tuple[int, ...]
-
-
-class FrozenBitMap2D:
-    def __init__(self, width: int, height: int, *, data: ba.frozenbitarray | None = None):
-        self.w = width
-        self.h = height
-
-        if data:
-            # Sanity check
-            assert len(data) == self.w * self.h
-            self.data = data
-        else:
-            self.data = ba.frozenbitarray(self.w * self.h)
-
-        self.used_space = self.data.count()
-        self._or_mask = None
-
-    @classmethod
-    def fromBitMap2D(cls, o: BitMap2D) -> FrozenBitMap2D:
-        return cls(o.w, o.h, data=ba.frozenbitarray(o.data))
-
-    def toBitMap2D(self) -> BitMap2D:
-        return BitMap2D(self.w, self.h, data=ba.bitarray(self.data))
-
-    def set_or_mask(self, full_width: int):
-        # The first `h - 1` rows get the `full_width`. The last row is just our width
-        or_mask = ba.bitarray(full_width * (self.h - 1) + self.w)
-
-        for i in range(self.h):
-            src_offset = self.w * i
-            dest_offset = full_width * i
-            or_mask[dest_offset : dest_offset + self.w] |= self.data[
-                src_offset : src_offset + self.w
-            ]
-
-        self._or_mask = ba.frozenbitarray(or_mask)
-
-    def nonconflicting_or_at(
-        self,
-        other: FrozenBitMap2D,
-        xy: tuple[int, int],
-    ) -> FrozenBitMap2D | None:
-        """Applies the `other` in an XOR with the top left corner at (x, y).
-
-        If there is a conflict (self had a 1 and other also has a 1 in the same place),
-        then returns `None`. Otherwise returns the resulting OR'd `FrozenBitMap2D`."""
-        x, y = xy
-
-        # Sanity check that we are in bounds and have an `_or_mask`
-        assert not (x < 0 or y < 0 or x > self.w or y > self.h)
-        assert other._or_mask
-
-        # If the `other` extends beyond the bounds, call this conflicting
-        if x + other.w > self.w or y + other.h > self.h:
-            return None
-
-        offset = (y * self.w) + x
-        before_count = self.data[offset : offset + len(other._or_mask)].count()
-        result = self.data[offset : offset + len(other._or_mask)] | other._or_mask
-        after_count = result.count()
-
-        # If the `other._or_mask` did not add `other.used_space` bits exactly,
-        # then there was a conflict
-        if before_count + other.used_space != after_count:
-            return None
-
-        mutable_data = ba.bitarray(self.data)
-        mutable_data[offset : offset + len(other._or_mask)] = result
-        return FrozenBitMap2D(self.w, self.h, data=ba.frozenbitarray(mutable_data))
-
-    def pprint(self, on="#", off=".") -> str:
-        rows = []
-        for y in range(self.h):
-            start = y * self.w
-            end = start + self.w
-            row = self.data[start:end]
-            rows.append("".join(on if bit else off for bit in row))
-        return "\n".join(rows)
-
-    @property
-    def inactive_indices(self) -> Iterator[tuple[int, int]]:
-        """Yields all indices that are 0s."""
-        indices_1d = self.data.search(ba.bitarray([0]))
-
-        for i_1d in indices_1d:
-            yield (i_1d % self.w, i_1d // self.w)
-
-    def __eq__(self, other: FrozenBitMap2D, /) -> bool:
-        return hash(self) == hash(other)
-
-    def __hash__(self) -> int:
-        """Hash this `FrozenBitMap2D`.
-
-        The hash function is defined such that `FrozenBitMap2D` that are symmetrical
-        horizontally, vertically or 180 degree flip will yield the same hash value.
-
-        This is done by checking for every row `i` (^R means reversed):
-        row[i] = row[n_rows - i -1]
-        row[i] = row[i]^R
-        row[i] = row[n_rows - i -1]^R
-
-        with the optimization that we only need to check up to `i` of half the number of rows
-        since the above equalities are horizontally symmetrical
-        """
-        running_hash = 0
-
-        for hi_left in range((self.h + 1) // 2):
-            hi_right = (self.h - 1) - hi_left
-
-            data_left = self.data[hi_left * self.w : (hi_left + 1) * self.w]
-            data_right = self.data[hi_right * self.w : (hi_right + 1) * self.w]
-
-            running_hash += hash(data_left)
-            running_hash += hash(data_left[::-1])
-            running_hash += hash(data_right)
-            running_hash += hash(data_right[::-1])
-
-        return running_hash
-
-    def __str__(self) -> str:
-        return self.pprint()
-
-
-class BitMap2D:
-    def __init__(self, width: int, height: int, *, data: ba.bitarray | None = None):
-        self.w = width
-        self.h = height
-
-        if data:
-            # Sanity check
-            assert len(data) == self.w * self.h
-            self.data = data
-        else:
-            self.data = ba.bitarray(self.w * self.h)
-
-    def copy(self) -> BitMap2D:
-        # Force `self.data` to a mutable bitarray on `copy`
-        data_cp = ba.bitarray(self.data)
-        return BitMap2D(self.w, self.h, data=data_cp)
-
-    def pprint(self, on="#", off=".") -> str:
-        rows = []
-        for y in range(self.h):
-            start = y * self.w
-            end = start + self.w
-            row = self.data[start:end]
-            rows.append("".join(on if bit else off for bit in row))
-        return "\n".join(rows)
-
-    def __getitem__(self, xy: tuple[int, int]):
-        x, y = xy
-        return self.data[y * self.w + x]
-
-    def __setitem__(self, xy: tuple[int, int], v: Literal[0, 1]):
-        x, y = xy
-        self.data[y * self.w + x] = v
-
-    def __str__(self) -> str:
-        return self.pprint()
+PresentData = tuple[tuple[bool, ...], ...]
 
 
 class Present:
     def __init__(
         self,
         present_id: PresentID,
-        area: FrozenBitMap2D,
-        *,
-        rotation: Rotation = Rotation.ZERO,
+        present_str: str,
     ):
         self.id = present_id
-        self.rotation = rotation
 
-        self.area = area
-
-        # Compute the other three rotations of this shape if it is not rotated
-        self._rotations = self._compute_rotations()
-
-    @classmethod
-    def from_str(cls, present_id: PresentID, present_str: str):
-        # Presents are always 3x3. Remove all "\n" from the `present_str`
-        # and assert the proper length
+        # Sanitize the `present_str` a bit
         present_str = present_str.replace("\n", "")
         assert len(present_str) == 9
 
-        data = BitMap2D(3, 3)
+        # Convert the the `present_str` in to a 2D boolean array
+        data_ls = [[False] * 3 for _ in range(3)]
         for i, c in enumerate(present_str):
-            row = i // 3
-            col = i % 3
-
             if c == "#":
-                data[col, row] = 1
+                row = i // 3
+                col = i % 3
+                data_ls[row][col] = True
 
-        return cls(present_id, FrozenBitMap2D.fromBitMap2D(data))
+        # Make `data_ls` in to a hashable structure
+        data = tuple(tuple(v for v in row) for row in data_ls)
+        data_rot1 = self._rotate_data(data)
+        data_rot2 = self._rotate_data(data_rot1)
+        data_rot3 = self._rotate_data(data_rot2)
 
-    def set_or_mask(self, full_width: int):
-        # Set the `or_mask` for all rotations
-        for oriented_present in self.orientations_iter:
-            oriented_present.area.set_or_mask(full_width)
+        # Store all unique rotations. This removes any rotational symmetry in the shape
+        self.data_rotations = {data, data_rot1, data_rot2, data_rot3}
 
-    def _compute_rotations(self) -> list[Present] | None:
-        # Only applies to the original un-rotated shape
-        if self.rotation != Rotation.ZERO:
-            return None
+    @staticmethod
+    def _rotate_data(data: PresentData) -> PresentData:
+        """Rotates the `data` clockwise."""
+        data_ls = [[False] * 3 for _ in range(3)]
 
-        ret = []
-        rotated_datas = set()
+        # Procedure to rotated a 3x3 matrix clockwise
+        for i in range(3):
+            for j in range(3):
+                data_ls[i][j] = data[2 - j][i]
 
-        # First add ourselves. Record the bitarray data in the `rotated_datas` seen
-        # set since we do not want to apply the reflected
-        # symmetry hash function of the FrozenBitMap2D
-        ret.append(self)
-        rotated_datas.add(self.area.data)
+        # Convert to type `PresentData`
+        return tuple(tuple(v for v in row) for row in data_ls)
 
-        # Rotate and yield 3 times
-        rotated_area = self.area.toBitMap2D()
-        for rot in list(Rotation)[1:]:
-            new_rotated_area = BitMap2D(3, 3)
-
-            # Procedure to rotated a 3x3 matrix clockwise
-            for i in range(3):
-                for j in range(3):
-                    new_rotated_area[i, j] = rotated_area[j, (2 - i)]
-
-            # Add the newly appended present
-            assert rot != Rotation.ZERO
-            new_area = FrozenBitMap2D.fromBitMap2D(new_rotated_area)
-
-            # No point in testing oriented presents that are rotationally symmetrical
-            if new_area.data not in rotated_datas:
-                ret.append(Present(self.id, new_area, rotation=rot))
-                rotated_datas.add(new_area.data)
-
-            rotated_area = new_rotated_area.copy()
-
-        return ret
-
-    @property
-    def orientations_iter(self) -> Iterator[Present]:
-        assert self._rotations is not None
-        yield from self._rotations
+    def orientations_iter(self) -> Iterator[tuple[int, PresentData]]:
+        yield from enumerate(self.data_rotations)
 
 
 class ChristmasTree:
@@ -285,91 +79,69 @@ class ChristmasTree:
             presents[p_id] for p_id, count in self.present_counts.items() for _ in range(count)
         ]
 
-    @staticmethod
-    def apply_present(
-        working_area: WorkingArea,
-        present: Present,
-        *,
-        seen: set[WorkingArea],
-    ) -> list[WorkingArea]:
-        ret = []
-
-        for xy in working_area.area.inactive_indices:
-            for oriented_present in present.orientations_iter:
-                new_area = working_area.area.nonconflicting_or_at(oriented_present.area, xy)
-
-                # If there is a valid `new_area`
-                if new_area is not None:
-                    new_working_area = WorkingArea(
-                        area=new_area,
-                        applied_presents=tuple(
-                            count if p_id != oriented_present.id else count + 1
-                            for p_id, count in enumerate(working_area.applied_presents)
-                        )
-                    )
-
-                    # If we have not seen this working area yet
-                    #if new_working_area not in seen:
-                    ret.append(new_working_area)
-                    seen.add(new_working_area)
-
-        return ret
-
-    def compute_solved_areas(self, presents: list[Present]) -> list[FrozenBitMap2D]:
-        # Start the work with all presents and an empty working area
-        work = deque(
-            [
-                (
-                    presents,
-                    WorkingArea(
-                        area=FrozenBitMap2D(self.width, self.height),
-                        applied_presents=tuple(0 for _ in range(len(self.present_counts))),
-                    ),
-                )
-            ]
-        )
-        seen_working_areas = set()
-
-        ret = []
-
-        while work:
-            to_do_presents, working_area = work.popleft()
-
-            # If there are no more presents to process, that means the `working_area`
-            # is a full and valid area, so save it
-            if not to_do_presents:
-                ret.append(working_area.area)
-                continue
-                
-            new_working_areas = self.apply_present(
-                working_area,
-                to_do_presents[0],
-                seen=seen_working_areas,
-            )
-
-            # Otherwise add the `new_areas` as new jobs at the end of the `work` deque
-            work.extendleft(zip(repeat(to_do_presents[1:]), new_working_areas, strict=False))
-
-        return ret
-
     def is_satisfiable(self) -> bool:
-        # Before working, be sure to set the OR mask for the `self.presents`
-        for p in self.presents:
-            p.set_or_mask(self.width)
+        # Build the optimization problem
+        prob = pl.LpProblem("demo", pl.LpMaximize)
 
-        present_mid = len(self.presents) // 2
-            
-        solved_half1 = self.compute_solved_areas(self.presents[present_mid:])
-        solved_half2 = self.compute_solved_areas(self.presents[:present_mid])
+        lp_vars_by_present = defaultdict(
+            lambda: defaultdict(
+                lambda: pl.LpVariable(
+                    f"p_{uuid.uuid4().hex}",
+                    lowBound=0,
+                    upBound=1,
+                    cat="Integer",
+                )
+            )
+        )
+        lp_exprs_presents = [
+            pl.LpAffineExpression(name=f"ep_{i}") for i in range(len(self.presents))
+        ]
+        lp_exprs_grid = [
+            [pl.LpAffineExpression(name=f"eg_{row}_{col}") for col in range(self.width)]
+            for row in range(self.height)
+        ]
 
-        breakpoint()
-        
-        for candidate_h1 in solved_half1:
-            for candidate_h2 in solved_half2:
-                if not (candidate_h1.data & candidate_h2.data).any():
-                    return True
+        for pidx, present in enumerate(self.presents):
+            # For every pivot position and every rotation. Stop 2 units from the right
+            # and bottom edges of the grid to  prevent the shape from extending beyond
+            # the grid's bounds
+            for row, col in product(range(self.height - 2), range(self.width - 2)):
+                for rotation, data in present.orientations_iter():
+                    key = (row, col, rotation)
+                    var = lp_vars_by_present[pidx][key]
 
-        return False
+                    # Look where the current configuration is non-empty and add the `var`
+                    # to the respective grid square's expression
+                    for col_diff, row_diff in product(range(3), range(3)):
+                        if data[row_diff][col_diff]:
+                            # Some sanity checks
+                            assert row + row_diff < self.height
+                            assert col + col_diff < self.width
+                            lp_exprs_grid[row + row_diff][col + col_diff] += var
+
+            # When done processing this present and its rotations, add of this present's
+            # variables in to one large present expression
+            for var in lp_vars_by_present[pidx].values():
+                lp_exprs_presents[pidx] += var
+
+            # The present variables have to sum up to exactly 1, meaning that
+            # for this present, only one position and one rotation will be selected
+            prob += lp_exprs_presents[pidx] == 1
+
+        # When all presents have been processed, the grid expressions all have to be <= 1.
+        # This indicates that each square in the grid may have at most one present (or be empty)
+        for row, col in product(range(self.height), range(self.width)):
+            prob += lp_exprs_grid[row][col] <= 1
+
+        # Finally the optimization is to maximize the present variables sum
+        prob += sum(
+            var for present_vars in lp_vars_by_present.values() for var in present_vars.values()
+        )
+
+        # Solve the problem
+        status_code = prob.solve(pl.PULP_CBC_CMD(msg=False))
+        return status_code == pl.LpStatusOptimal
+
 
 def part1():
     file_contents = IN_FILE.read_text()
@@ -384,7 +156,7 @@ def part1():
         present_id = int(present_match.group(1))
         present_str = present_match.group(2)
 
-        presents.append(Present.from_str(present_id, present_str))
+        presents.append(Present(present_id, present_str))
 
     christmas_tree_match = re.compile(r"(\d+)x(\d+): ((?:\d+\s+)+)")
 
@@ -397,8 +169,11 @@ def part1():
         trees.append(ChristmasTree(width, height, present_counts, presents))
 
     n_satisfied = 0
-    for tree in trees:
-        n_satisfied += int(tree.is_satisfiable())
+    for tidx, tree in enumerate(trees):
+        print(f"Starting {tidx}")
+        satisfiable = tree.is_satisfiable()
+        n_satisfied += int(satisfiable)
+        print(f"Finished {tidx} {satisfiable}")
 
     print(f"Part 1 Christmas trees satisfied: {n_satisfied}")
 
