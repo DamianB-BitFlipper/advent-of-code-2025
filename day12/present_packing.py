@@ -10,8 +10,8 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 # IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
-IN_FILE = Path("./full_input2.txt")
+IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./full_input2.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -101,13 +101,13 @@ class ChristmasTree:
             for y in range(self.height)
         ]
 
-        # Expressions requiring the exact amount of present counts
-        sat_exprs_presents = [
+        # Variables used to require the exact amount of present counts
+        sat_vars_presents = [
             [] for _ in self.present_counts
         ]
 
-        # Expressions requiring grid elements to have at most one occupant
-        sat_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
+        # Variables used to require grid elements to have at most one occupant
+        sat_vars_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
         
         for p_id, p_count in self.present_counts.items():
             # Skip if there is no `p_count`
@@ -131,23 +131,22 @@ class ChristmasTree:
                             # Some sanity checks
                             assert row + row_diff < self.height
                             assert col + col_diff < self.width
-                            sat_exprs_grid[row + row_diff][col + col_diff].append(var)
+                            sat_vars_grid[row + row_diff][col + col_diff].append(var)
 
             # When done processing this present and its rotations, add of this present's
             # variables in to one large present expression
             for var in sat_vars_by_present[p_id].values():
-                sat_exprs_presents[p_id].append(var)
+                sat_vars_presents[p_id].append(var)
 
             # The present variables have to sum up to exactly `p_count`, meaning that
             # for this present exactly `p_count` of it must be selected
-            model.Add(sum(sat_exprs_presents[p_id]) == p_count)
+            model.Add(sum(sat_vars_presents[p_id]) == p_count)
 
         # Go through the grid and build the occupancy dependency on all of the present variables
-        # If the `present_var` is True, it implies the `occupancy_var` is True
+        # This enforces no overlaps since occupancy is a boolean `{0, 1}`. And conversely
+        # the occupancy is `True` if there is a var set for `row` and `col`
         for row, col in product(range(self.height), range(self.width)):
-            occupancy_var = sat_vars_grid_occupancy[row][col]
-            for present_var in sat_exprs_grid[row][col]:
-                model.AddImplication(present_var, occupancy_var)
+            model.Add(sum(sat_vars_grid[row][col]) == sat_vars_grid_occupancy[row][col])
             
         # The occupied cells must equal the `total_present_area` to ensure no overlapping
         model.Add(
