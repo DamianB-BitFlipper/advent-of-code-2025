@@ -10,8 +10,8 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 
-# IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./demo_input.txt")
+# IN_FILE = Path("./full_input.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -82,49 +82,63 @@ class ChristmasTree:
         # Build the CP-SAT problem
         model = cp_model.CpModel()
 
-        lp_vars_by_present = defaultdict(
-            lambda: defaultdict(
-                lambda: model.NewBoolVar(f"p_{uuid.uuid4().hex}")
-            )
-        )
-        lp_exprs_presents = [
-            [] for _ in self.present_counts
-        ]
-        lp_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
-
+        x_intervals = []
+        y_intervals = []
         for p_id, p_count in self.present_counts.items():
             present = self.presents[p_id]
             
-            # For every pivot position and every rotation. Stop 2 units from the right
-            # and bottom edges of the grid to  prevent the shape from extending beyond
-            # the grid's bounds
-            for row, col in product(range(self.height - 2), range(self.width - 2)):
-                for rotation, data in present.orientations_iter():
-                    key = (row, col, rotation)
-                    var = lp_vars_by_present[p_id][key]
+            for i in range(p_count):
+                # Anchor of the present to stay within the bounds of the grid. The range
+                # is inclusive on both bounds
+                x = model.NewIntVar(0, self.width - 3, f"p_{p_id}_{i}_x")
+                y = model.NewIntVar(0, self.height - 3, f"p_{p_id}_{i}_y")
 
-                    # Look where the current configuration is non-empty and add the `var`
-                    # to the respective grid square's expression
-                    for col_diff, row_diff in product(range(3), range(3)):
-                        if data[row_diff][col_diff]:
-                            # Some sanity checks
-                            assert row + row_diff < self.height
-                            assert col + col_diff < self.width
-                            lp_exprs_grid[row + row_diff][col + col_diff].append(var)
-                            
-            # When done processing this present and its rotations, add of this present's
-            # variables in to one large present expression
-            for var in lp_vars_by_present[p_id].values():
-                lp_exprs_presents[p_id].append(var)
+                # Force a rotation pick
+                rotation_selector_vars = [
+                    model.NewBoolVar(f"r_{p_id}_{i}_{rot}")
+                    for rot, _ in present.orientations_iter()
+                ]
+                model.AddExactlyOne(rotation_selector_vars)
 
-            # The present variables have to sum up to exactly `p_count`, meaning that
-            # for this present exactly `p_count` of it must be selected
-            model.Add(sum(lp_exprs_presents[p_id]) == p_count)
-            
-        # When all presents have been processed, the grid expressions all have to be <= 1.
-        # This indicates that each square in the grid may have at most one present (or be empty)
-        for row, col in product(range(self.height), range(self.width)):
-            model.Add(sum(lp_exprs_grid[row][col]) <= 1)
+                # Each box in the present shape is its own variable
+                _, data = next(present.orientations_iter())
+                shape_vars = [
+                    (
+                        model.NewIntVar(0, self.width - 1, f"p_{p_id}_{i}_{dx}_dx"),
+                        model.NewIntVar(0, self.height - 1, f"p_{p_id}_{i}_{dy}_dy")
+                    )
+                    for dx, dy in product(range(3), range(3))
+                    if data[dy][dx]
+                ]
+                
+                for rot, oriented_data in present.orientations_iter():
+                    i = 0
+                    for dx, dy in product(range(3), range(3)):
+                        if oriented_data[dy][dx]:
+                            # Get the next unused shape_var
+                            dx_var, dy_var = shape_vars[i]
+                            i += 1
+
+                            # Require the present shape variable `dx_var/dy_var`
+                            # to be properly set relative to the anchor `x/y`
+                            # only for the given rotation, disregard otherwise
+                            model.Add(dx_var == x + dx).OnlyEnforceIf(
+                                rotation_selector_vars[rot]
+                            )
+                            model.Add(dy_var == y + dy).OnlyEnforceIf(
+                                rotation_selector_vars[rot]
+                            )
+
+                # Create intervals from the `shape_vars`
+                for dx_var, dy_var in shape_vars:
+                    x_intervals.append(
+                        model.NewIntervalVar(dx_var, 1, dx_var + 1, f"i{dx_var.Name()}")
+                    )
+                    y_intervals.append(
+                        model.NewIntervalVar(dy_var, 1, dy_var + 1, f"i{dy_var.Name()}")
+                    )
+
+        model.AddNoOverlap2D(x_intervals, y_intervals)
             
         # Feasibility only (no objective)
         solver = cp_model.CpSolver()
