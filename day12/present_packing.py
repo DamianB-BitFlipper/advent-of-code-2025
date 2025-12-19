@@ -2,21 +2,23 @@ from __future__ import annotations
 
 import re
 from typing import Literal
+from collections import defaultdict
 from collections.abc import Iterator
 from itertools import product
 from pathlib import Path
 
 from ortools.sat.python import cp_model
 
-IN_FILE = Path("./demo_input.txt")
+# IN_FILE = Path("./demo_input.txt")
 # IN_FILE = Path("./full_input.txt")
-# IN_FILE = Path("./full_input2.txt")
+IN_FILE = Path("./full_input2.txt")
 
+PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
 
 
 class Present:
-    def __init__(self, present_id: int, present_str: str):
+    def __init__(self, present_id: PresentID, present_str: str):
         self.present_id = present_id
         self.size = 0
 
@@ -102,11 +104,17 @@ class ChristmasTree:
             for y in range(self.height)
         ]
 
-        # Expressions requiring every present to be placed
-        sat_exprs_presents = [[] for _ in self.flattened_presents]
+        # Variables that will be constrained to require that every present to be placed
+        sat_vars_presents = [[] for _ in self.flattened_presents]
 
-        # Expressions requiring grid elements to have at most one occupant
-        sat_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
+        # Variables and their ord numbers that later will be used to enforce placement
+        # ordering to prevent combinatorial explosion of identical solutions
+        sat_vars_label_ords: list[list[tuple[int, cp_model.BoolVar]]] = [
+            [] for _ in self.flattened_presents
+        ]
+        
+        # Variables that will be constrained to require grid cells to have at most one occupant
+        sat_vars_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
 
         for p_idx, present in enumerate(self.flattened_presents):
             # For every pivot position and every rotation. Stop 2 units from the right
@@ -116,7 +124,8 @@ class ChristmasTree:
                 for rotation, data in present.orientations_iter():
                     ord_id = self._to_stable_ordering(row, col, rotation)
                     var = model.NewBoolVar(f"p_{p_idx}_{row}_{col}_{rotation}_{ord_id}")
-                    sat_exprs_presents[p_idx].append(var)
+                    sat_vars_presents[p_idx].append(var)
+                    sat_vars_label_ords[p_idx].append((ord_id, var))
                     
                     # Look where the current configuration is non-empty and add the `var`
                     # to the respective grid square's expression
@@ -125,16 +134,16 @@ class ChristmasTree:
                             # Some sanity checks
                             assert row + row_diff < self.height
                             assert col + col_diff < self.width
-                            sat_exprs_grid[row + row_diff][col + col_diff].append(var)
+                            sat_vars_grid[row + row_diff][col + col_diff].append(var)
 
             # The present must be placed exactly once
-            model.AddExactlyOne(sat_exprs_presents[p_idx])
+            model.AddExactlyOne(sat_vars_presents[p_idx])
 
         # Go through the grid and build the occupancy dependency on all of the present variables
         # This enforces no overlaps since occupancy is a boolean `{0, 1}`. And conversely
         # the occupancy is `True` if there is a var set for `row` and `col`
         for row, col in product(range(self.height), range(self.width)):
-            model.Add(sum(sat_exprs_grid[row][col]) == sat_vars_grid_occupancy[row][col])
+            model.Add(sum(sat_vars_grid[row][col]) == sat_vars_grid_occupancy[row][col])
 
         # The occupied cells must equal the `total_present_area` to ensure no overlapping
         model.Add(
@@ -147,7 +156,33 @@ class ChristmasTree:
         # shape touch both the top-most row and leftmost column
         model.AddAtLeastOne(sat_vars_grid_occupancy[0])
         model.AddAtLeastOne(sat_vars_grid_occupancy[row][0] for row in range(self.height))
-            
+
+        # Kill combinatorial symmetry from placing identical shapes by enforcing
+        # a stable ordering for each present within a present type
+        for present_class in self.presents:
+            present_class_label_vars = []
+            for p_idx, _ in enumerate(present_class):
+                # Extract all ord values for the given `p_idx`
+                ord_ids = [ord_id for ord_id, _ in sat_vars_label_ords[p_idx]]
+                min_ord_id = min(ord_ids)
+                max_ord_id = max(ord_ids)
+
+                label_var = model.NewIntVar(min_ord_id, max_ord_id, f"l_{p_idx}")
+                present_class_label_vars.append(label_var)
+
+                # Enforce that the current `label_var` is equal to the ord it selected. This
+                # constraint works since the `var` is a boolean and only one will be `True`
+                model.Add(
+                    label_var == sum(ord_id * var for ord_id, var in sat_vars_label_ords[p_idx])
+                )
+
+            # Enforce strict label ordering for all presents within a `present_class`
+            for label_var1, label_var2 in zip(
+                    present_class_label_vars, present_class_label_vars[1:], strict=False
+            ):
+                model.Add(label_var1 < label_var2)
+        
+        
         # Feasibility only (no objective)
         solver = cp_model.CpSolver()
         solver.parameters.stop_after_first_solution = True
