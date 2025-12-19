@@ -9,9 +9,9 @@ from pathlib import Path
 
 from ortools.sat.python import cp_model
 
-
 # IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
+# IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./full_input2.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -82,26 +82,31 @@ class ChristmasTree:
         # Build the CP-SAT problem
         model = cp_model.CpModel()
 
-        lp_vars_by_present = defaultdict(
+        # Represents the spaces that are occupied by a present anchored at all possible positions
+        sat_vars_by_present = defaultdict(
             lambda: defaultdict(
                 lambda: model.NewBoolVar(f"p_{uuid.uuid4().hex}")
             )
         )
-        lp_exprs_presents = [
+
+        # Expressions requiring the exact amount of present counts
+        sat_exprs_presents = [
             [] for _ in self.present_counts
         ]
-        lp_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
+
+        # Expressions requiring grid elements to have at most one occupant
+        sat_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
 
         for p_id, p_count in self.present_counts.items():
             present = self.presents[p_id]
-            
+
             # For every pivot position and every rotation. Stop 2 units from the right
             # and bottom edges of the grid to  prevent the shape from extending beyond
             # the grid's bounds
             for row, col in product(range(self.height - 2), range(self.width - 2)):
                 for rotation, data in present.orientations_iter():
                     key = (row, col, rotation)
-                    var = lp_vars_by_present[p_id][key]
+                    var = sat_vars_by_present[p_id][key]
 
                     # Look where the current configuration is non-empty and add the `var`
                     # to the respective grid square's expression
@@ -110,27 +115,27 @@ class ChristmasTree:
                             # Some sanity checks
                             assert row + row_diff < self.height
                             assert col + col_diff < self.width
-                            lp_exprs_grid[row + row_diff][col + col_diff].append(var)
-                            
+                            sat_exprs_grid[row + row_diff][col + col_diff].append(var)
+
             # When done processing this present and its rotations, add of this present's
             # variables in to one large present expression
-            for var in lp_vars_by_present[p_id].values():
-                lp_exprs_presents[p_id].append(var)
+            for var in sat_vars_by_present[p_id].values():
+                sat_exprs_presents[p_id].append(var)
 
             # The present variables have to sum up to exactly `p_count`, meaning that
             # for this present exactly `p_count` of it must be selected
-            model.Add(sum(lp_exprs_presents[p_id]) == p_count)
-            
+            model.Add(sum(sat_exprs_presents[p_id]) == p_count)
+
         # When all presents have been processed, the grid expressions all have to be <= 1.
         # This indicates that each square in the grid may have at most one present (or be empty)
         for row, col in product(range(self.height), range(self.width)):
-            model.Add(sum(lp_exprs_grid[row][col]) <= 1)
-            
+            model.AddAtMostOne(sat_exprs_grid[row][col])
+
         # Feasibility only (no objective)
         solver = cp_model.CpSolver()
         solver.parameters.stop_after_first_solution = True
         status = solver.Solve(model)
-        
+
         return status in (cp_model.FEASIBLE, cp_model.OPTIMAL)
 
 
