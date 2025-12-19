@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pulp as pl
 
-# IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./demo_input.txt")
+# IN_FILE = Path("./full_input.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -75,9 +75,7 @@ class ChristmasTree:
 
         # Convert the `present_counts` to a dictionary of present_id
         self.present_counts = dict(enumerate(present_counts))
-        self.presents = [
-            presents[p_id] for p_id, count in self.present_counts.items() for _ in range(count)
-        ]
+        self.presents = presents
 
     def is_satisfiable(self) -> bool:
         # Build the optimization problem
@@ -87,28 +85,28 @@ class ChristmasTree:
             lambda: defaultdict(
                 lambda: pl.LpVariable(
                     f"p_{uuid.uuid4().hex}",
-                    lowBound=0,
-                    upBound=1,
-                    cat="Integer",
+                    cat="Binary",
                 )
             )
         )
         lp_exprs_presents = [
-            pl.LpAffineExpression(name=f"ep_{i}") for i in range(len(self.presents))
+            pl.LpAffineExpression(name=f"ep_{p_id}") for p_id in self.present_counts
         ]
         lp_exprs_grid = [
             [pl.LpAffineExpression(name=f"eg_{row}_{col}") for col in range(self.width)]
             for row in range(self.height)
         ]
 
-        for pidx, present in enumerate(self.presents):
+        for p_id, p_count in self.present_counts.items():
+            present = self.presents[p_id]
+            
             # For every pivot position and every rotation. Stop 2 units from the right
             # and bottom edges of the grid to  prevent the shape from extending beyond
             # the grid's bounds
             for row, col in product(range(self.height - 2), range(self.width - 2)):
                 for rotation, data in present.orientations_iter():
                     key = (row, col, rotation)
-                    var = lp_vars_by_present[pidx][key]
+                    var = lp_vars_by_present[p_id][key]
 
                     # Look where the current configuration is non-empty and add the `var`
                     # to the respective grid square's expression
@@ -118,25 +116,24 @@ class ChristmasTree:
                             assert row + row_diff < self.height
                             assert col + col_diff < self.width
                             lp_exprs_grid[row + row_diff][col + col_diff] += var
-
+                            
             # When done processing this present and its rotations, add of this present's
             # variables in to one large present expression
-            for var in lp_vars_by_present[pidx].values():
-                lp_exprs_presents[pidx] += var
+            for var in lp_vars_by_present[p_id].values():
+                lp_exprs_presents[p_id] += var
 
-            # The present variables have to sum up to exactly 1, meaning that
-            # for this present, only one position and one rotation will be selected
-            prob += lp_exprs_presents[pidx] == 1
-
+            # The present variables have to sum up to exactly `p_count`, meaning that
+            # for this present exactly `p_count` of it must be selected
+            prob += lp_exprs_presents[p_id] == p_count
+            
         # When all presents have been processed, the grid expressions all have to be <= 1.
         # This indicates that each square in the grid may have at most one present (or be empty)
         for row, col in product(range(self.height), range(self.width)):
             prob += lp_exprs_grid[row][col] <= 1
-
-        # Finally the optimization is to maximize the present variables sum
-        prob += sum(
-            var for present_vars in lp_vars_by_present.values() for var in present_vars.values()
-        )
+            
+        # We are interested in if there is a solution or not, so the
+        # optimization target is irrelevant
+        prob += 0
 
         # Solve the problem
         status_code = prob.solve(pl.PULP_CBC_CMD(msg=False))
