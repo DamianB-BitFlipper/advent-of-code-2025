@@ -7,10 +7,11 @@ from collections.abc import Iterator
 from itertools import product
 from pathlib import Path
 
-import pulp as pl
+from ortools.sat.python import cp_model
 
-IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
+
+# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./full_input.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -78,24 +79,18 @@ class ChristmasTree:
         self.presents = presents
 
     def is_satisfiable(self) -> bool:
-        # Build the optimization problem
-        prob = pl.LpProblem("demo", pl.LpMaximize)
+        # Build the CP-SAT problem
+        model = cp_model.CpModel()
 
         lp_vars_by_present = defaultdict(
             lambda: defaultdict(
-                lambda: pl.LpVariable(
-                    f"p_{uuid.uuid4().hex}",
-                    cat="Binary",
-                )
+                lambda: model.NewBoolVar(f"p_{uuid.uuid4().hex}")
             )
         )
         lp_exprs_presents = [
-            pl.LpAffineExpression(name=f"ep_{p_id}") for p_id in self.present_counts
+            [] for _ in self.present_counts
         ]
-        lp_exprs_grid = [
-            [pl.LpAffineExpression(name=f"eg_{row}_{col}") for col in range(self.width)]
-            for row in range(self.height)
-        ]
+        lp_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
 
         for p_id, p_count in self.present_counts.items():
             present = self.presents[p_id]
@@ -115,29 +110,28 @@ class ChristmasTree:
                             # Some sanity checks
                             assert row + row_diff < self.height
                             assert col + col_diff < self.width
-                            lp_exprs_grid[row + row_diff][col + col_diff] += var
+                            lp_exprs_grid[row + row_diff][col + col_diff].append(var)
                             
             # When done processing this present and its rotations, add of this present's
             # variables in to one large present expression
             for var in lp_vars_by_present[p_id].values():
-                lp_exprs_presents[p_id] += var
+                lp_exprs_presents[p_id].append(var)
 
             # The present variables have to sum up to exactly `p_count`, meaning that
             # for this present exactly `p_count` of it must be selected
-            prob += lp_exprs_presents[p_id] == p_count
+            model.Add(sum(lp_exprs_presents[p_id]) == p_count)
             
         # When all presents have been processed, the grid expressions all have to be <= 1.
         # This indicates that each square in the grid may have at most one present (or be empty)
         for row, col in product(range(self.height), range(self.width)):
-            prob += lp_exprs_grid[row][col] <= 1
+            model.Add(sum(lp_exprs_grid[row][col]) <= 1)
             
-        # We are interested in if there is a solution or not, so the
-        # optimization target is irrelevant
-        prob += 0
-
-        # Solve the problem
-        status_code = prob.solve(pl.PULP_CBC_CMD(msg=False))
-        return status_code == pl.LpStatusOptimal
+        # Feasibility only (no objective)
+        solver = cp_model.CpSolver()
+        solver.parameters.stop_after_first_solution = True
+        status = solver.Solve(model)
+        
+        return status in (cp_model.FEASIBLE, cp_model.OPTIMAL)
 
 
 def part1():
@@ -167,10 +161,10 @@ def part1():
 
     n_satisfied = 0
     for tidx, tree in enumerate(trees):
-        print(f"Starting {tidx}")
+        print(f"Starting {tidx} / {len(trees) - 1}")
         satisfiable = tree.is_satisfiable()
         n_satisfied += int(satisfiable)
-        print(f"Finished {tidx} {satisfiable}")
+        print(f"Finished {tidx} / {len(trees) - 1} :: {satisfiable}")
 
     print(f"Part 1 Christmas trees satisfied: {n_satisfied}")
 
