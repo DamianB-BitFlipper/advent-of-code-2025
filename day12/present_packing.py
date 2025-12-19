@@ -24,6 +24,7 @@ class Present:
         present_str: str,
     ):
         self.id = present_id
+        self.size = 0
 
         # Sanitize the `present_str` a bit
         present_str = present_str.replace("\n", "")
@@ -36,6 +37,7 @@ class Present:
                 row = i // 3
                 col = i % 3
                 data_ls[row][col] = True
+                self.size += 1
 
         # Make `data_ls` in to a hashable structure
         data = tuple(tuple(v for v in row) for row in data_ls)
@@ -79,6 +81,9 @@ class ChristmasTree:
         self.presents = presents
 
     def is_satisfiable(self) -> bool:
+        total_present_area = sum(p_count * self.presents[p_id].size
+                                 for p_id, p_count in self.present_counts.items())
+        
         # Build the CP-SAT problem
         model = cp_model.CpModel()
 
@@ -89,6 +94,13 @@ class ChristmasTree:
             )
         )
 
+        sat_vars_grid_occupancy = [
+            [
+                model.NewBoolVar(f"occ_{x}_{y}") for x in range(self.width)
+            ]
+            for y in range(self.height)
+        ]
+
         # Expressions requiring the exact amount of present counts
         sat_exprs_presents = [
             [] for _ in self.present_counts
@@ -96,8 +108,12 @@ class ChristmasTree:
 
         # Expressions requiring grid elements to have at most one occupant
         sat_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
-
+        
         for p_id, p_count in self.present_counts.items():
+            # Skip if there is no `p_count`
+            if not p_count:
+                continue
+            
             present = self.presents[p_id]
 
             # For every pivot position and every rotation. Stop 2 units from the right
@@ -126,11 +142,25 @@ class ChristmasTree:
             # for this present exactly `p_count` of it must be selected
             model.Add(sum(sat_exprs_presents[p_id]) == p_count)
 
-        # When all presents have been processed, the grid expressions all have to be <= 1.
-        # This indicates that each square in the grid may have at most one present (or be empty)
+        # Go through the grid and build the occupancy dependency on all of the present variables
+        # If the `present_var` is True, it implies the `occupancy_var` is True
         for row, col in product(range(self.height), range(self.width)):
-            model.AddAtMostOne(sat_exprs_grid[row][col])
+            occupancy_var = sat_vars_grid_occupancy[row][col]
+            for present_var in sat_exprs_grid[row][col]:
+                model.AddImplication(present_var, occupancy_var)
+            
+        # The occupied cells must equal the `total_present_area` to ensure no overlapping
+        model.Add(
+            sum(sat_vars_grid_occupancy[row][col]
+                for row, col in product(range(self.height), range(self.width)))
+            == total_present_area
+        )
 
+        # Additionally kill any translational symmetry by requiring that the solved
+        # shape touch both the top-most row and leftmost column
+        model.AddAtLeastOne(sat_vars_grid_occupancy[0])
+        model.AddAtLeastOne(sat_vars_grid_occupancy[row][0] for row in range(self.height))
+            
         # Feasibility only (no objective)
         solver = cp_model.CpSolver()
         solver.parameters.stop_after_first_solution = True
