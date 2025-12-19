@@ -1,29 +1,23 @@
 from __future__ import annotations
 
 import re
-import uuid
-from collections import defaultdict
+from typing import Literal
 from collections.abc import Iterator
 from itertools import product
 from pathlib import Path
 
 from ortools.sat.python import cp_model
 
-# IN_FILE = Path("./demo_input.txt")
+IN_FILE = Path("./demo_input.txt")
 # IN_FILE = Path("./full_input.txt")
-IN_FILE = Path("./full_input2.txt")
+# IN_FILE = Path("./full_input2.txt")
 
-PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
 
 
 class Present:
-    def __init__(
-        self,
-        present_id: PresentID,
-        present_str: str,
-    ):
-        self.id = present_id
+    def __init__(self, present_id: int, present_str: str):
+        self.present_id = present_id
         self.size = 0
 
         # Sanitize the `present_str` a bit
@@ -73,27 +67,34 @@ class ChristmasTree:
         present_counts: list[int],
         presents: list[Present],
     ):
+        # Sanity check
+        assert len(present_counts) == len(presents)
+        
         self.width = width
         self.height = height
 
         # Convert the `present_counts` to a dictionary of present_id
-        self.present_counts = dict(enumerate(present_counts))
-        self.presents = presents
+        self.present_counts: dict[int, int] = dict(enumerate(present_counts))
 
+        # Expand the `self.present_counts` to all presents in groups
+        self.presents = [[presents[p_idx] for _ in range(p_count)]
+                         for p_idx, p_count in self.present_counts.items()] 
+
+        # For convenience, also flatten the list of list of presents
+        self.flattened_presents = sum(self.presents, [])
+
+    def _to_stable_ordering(self, row: int, col: int, rotation: Literal[0,1,2,3]) -> int:
+        """Given the 3 parameters, produces a unique 1:1 mapping for stable ordering."""
+        # There can be up to 4 rotations, so multiply by 4 to make space for them
+        return 4 * (row * self.width + col) + rotation
+        
     def is_satisfiable(self) -> bool:
-        total_present_area = sum(p_count * self.presents[p_id].size
-                                 for p_id, p_count in self.present_counts.items())
+        total_present_area = sum(present.size for present in self.flattened_presents)
         
         # Build the CP-SAT problem
         model = cp_model.CpModel()
 
-        # Represents the spaces that are occupied by a present anchored at all possible positions
-        sat_vars_by_present = defaultdict(
-            lambda: defaultdict(
-                lambda: model.NewBoolVar(f"p_{uuid.uuid4().hex}")
-            )
-        )
-
+        # Represents if a given cell is occupied or not
         sat_vars_grid_occupancy = [
             [
                 model.NewBoolVar(f"occ_{x}_{y}") for x in range(self.width)
@@ -101,29 +102,22 @@ class ChristmasTree:
             for y in range(self.height)
         ]
 
-        # Expressions requiring the exact amount of present counts
-        sat_exprs_presents = [
-            [] for _ in self.present_counts
-        ]
+        # Expressions requiring every present to be placed
+        sat_exprs_presents = [[] for _ in self.flattened_presents]
 
         # Expressions requiring grid elements to have at most one occupant
         sat_exprs_grid = [[[] for _ in range(self.width)] for _ in range(self.height)]
-        
-        for p_id, p_count in self.present_counts.items():
-            # Skip if there is no `p_count`
-            if not p_count:
-                continue
-            
-            present = self.presents[p_id]
 
+        for p_idx, present in enumerate(self.flattened_presents):
             # For every pivot position and every rotation. Stop 2 units from the right
             # and bottom edges of the grid to  prevent the shape from extending beyond
             # the grid's bounds
             for row, col in product(range(self.height - 2), range(self.width - 2)):
                 for rotation, data in present.orientations_iter():
-                    key = (row, col, rotation)
-                    var = sat_vars_by_present[p_id][key]
-
+                    ord_id = self._to_stable_ordering(row, col, rotation)
+                    var = model.NewBoolVar(f"p_{p_idx}_{row}_{col}_{rotation}_{ord_id}")
+                    sat_exprs_presents[p_idx].append(var)
+                    
                     # Look where the current configuration is non-empty and add the `var`
                     # to the respective grid square's expression
                     for col_diff, row_diff in product(range(3), range(3)):
@@ -133,22 +127,15 @@ class ChristmasTree:
                             assert col + col_diff < self.width
                             sat_exprs_grid[row + row_diff][col + col_diff].append(var)
 
-            # When done processing this present and its rotations, add of this present's
-            # variables in to one large present expression
-            for var in sat_vars_by_present[p_id].values():
-                sat_exprs_presents[p_id].append(var)
-
-            # The present variables have to sum up to exactly `p_count`, meaning that
-            # for this present exactly `p_count` of it must be selected
-            model.Add(sum(sat_exprs_presents[p_id]) == p_count)
+            # The present must be placed exactly once
+            model.AddExactlyOne(sat_exprs_presents[p_idx])
 
         # Go through the grid and build the occupancy dependency on all of the present variables
-        # If the `present_var` is True, it implies the `occupancy_var` is True
+        # This enforces no overlaps since occupancy is a boolean `{0, 1}`. And conversely
+        # the occupancy is `True` if there is a var set for `row` and `col`
         for row, col in product(range(self.height), range(self.width)):
-            occupancy_var = sat_vars_grid_occupancy[row][col]
-            for present_var in sat_exprs_grid[row][col]:
-                model.AddImplication(present_var, occupancy_var)
-            
+            model.Add(sum(sat_exprs_grid[row][col]) == sat_vars_grid_occupancy[row][col])
+
         # The occupied cells must equal the `total_present_area` to ensure no overlapping
         model.Add(
             sum(sat_vars_grid_occupancy[row][col]
@@ -166,6 +153,26 @@ class ChristmasTree:
         solver.parameters.stop_after_first_solution = True
         status = solver.Solve(model)
 
+        # # Print the placements for debugging
+        # if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
+        #     print('=' * 20)
+            
+        #     for p_idx, vars in enumerate(sat_exprs_presents):
+        #         for var in vars:
+        #             if solver.BooleanValue(var):
+        #                 print(f"present #{var} placed")
+
+        #     print('-' * 20)
+
+        #     for row in range(self.height):
+        #         for col in range(self.width):
+        #             if solver.BooleanValue(sat_vars_grid_occupancy[row][col]):
+        #                 print('#', end='')
+        #             else:
+        #                 print('.', end='')
+
+        #         print()
+        
         return status in (cp_model.FEASIBLE, cp_model.OPTIMAL)
 
 
