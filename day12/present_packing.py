@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from tqdm import tqdm
 import uuid
 from collections import defaultdict
 from collections.abc import Iterator
@@ -10,8 +11,7 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 # IN_FILE = Path("./demo_input.txt")
-# IN_FILE = Path("./full_input.txt")
-IN_FILE = Path("./full_input2.txt")
+IN_FILE = Path("./full_input.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -209,11 +209,8 @@ def part1():
         trees.append(ChristmasTree(width, height, present_counts, presents))
 
     n_satisfied = 0
-    for tidx, tree in enumerate(trees):
-        print(f"Starting {tidx} / {len(trees) - 1}")
-        satisfiable = tree.is_satisfiable()
-        n_satisfied += int(satisfiable)
-        print(f"Finished {tidx} / {len(trees) - 1} :: {satisfiable}")
+    for tree in tqdm(trees, desc="Working"):
+        n_satisfied += int(tree.is_satisfiable())
 
     print(f"Part 1 Christmas trees satisfied: {n_satisfied}")
 
