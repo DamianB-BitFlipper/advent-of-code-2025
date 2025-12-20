@@ -10,8 +10,8 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 # IN_FILE = Path("./demo_input.txt")
-IN_FILE = Path("./full_input.txt")
-# IN_FILE = Path("./full_input2.txt")
+# IN_FILE = Path("./full_input.txt")
+IN_FILE = Path("./full_input2.txt")
 
 PresentID = int
 PresentData = tuple[tuple[bool, ...], ...]
@@ -158,11 +158,26 @@ class ChristmasTree:
         # Additionally kill any translational symmetry by requiring that the solved
         # shape touch both the top-most row and leftmost column
         model.AddAtLeastOne(sat_vars_grid_occupancy[0])
-        model.AddAtLeastOne(sat_vars_grid_occupancy[row][0] for row in range(self.height))
-            
+        model.AddAtLeastOne([sat_vars_grid_occupancy[row][0] for row in range(self.height)])
+
+        # Add weak constraints that narrow down reflective symmetry by requiring the first row
+        # to be left-heavy and the first column to be top-heavy.
+        model.Add(
+            sum(sat_vars_grid_occupancy[0][col] for col in range(self.width // 2))
+            >=
+            sum(sat_vars_grid_occupancy[0][col]
+                for col in range(self.width - 1, self.width // 2, -1))
+        )
+
+        model.Add(
+            sum(sat_vars_grid_occupancy[row][0] for row in range(self.height // 2))
+            >=
+            sum(sat_vars_grid_occupancy[row][0]
+                for row in range(self.height - 1, self.height // 2, -1))
+        )
+                
         # Feasibility only (no objective)
         solver = cp_model.CpSolver()
-        solver.parameters.stop_after_first_solution = True
         status = solver.Solve(model)
 
         return status in (cp_model.FEASIBLE, cp_model.OPTIMAL)
