@@ -20,6 +20,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "debugpy>=1.8.19",
     "pre-commit>=4.5.0",
     "pyright>=1.1.407",
     "ruff>=0.14.8",
