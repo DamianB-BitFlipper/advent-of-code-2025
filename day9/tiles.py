@@ -3,6 +3,7 @@ import random
 import re
 from collections import namedtuple
 from collections.abc import Iterator
+from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from typing import cast
@@ -18,6 +19,8 @@ random.seed(42)
 
 class Polygon:
     def __init__(self):
+        self.is_point_inside = lru_cache(maxsize=None)(self._is_point_inside)
+
         self.h_edges = []
         self.v_edges = []
 
@@ -48,7 +51,7 @@ class Polygon:
         self.min_y = min([self.min_y, edge[0].y])
         self.max_y = max([self.max_y, edge[1].y])
 
-    def is_point_inside(self, test_point: Point) -> bool:
+    def _is_point_inside(self, test_point: Point) -> bool:
         # Short circuit test if the point is outside of the rectangular bounding box
         if (
             test_point.x < self.min_x
